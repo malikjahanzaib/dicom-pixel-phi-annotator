@@ -369,6 +369,23 @@ legend { padding: 0 0 6px; }
 .callout.flag { border-left: 2px solid var(--flag); }
 .callout.warn { border-left: 2px solid var(--flag); color: #e6c98a; }
 
+#templateList { display: flex; flex-direction: column; max-height: 190px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); }
+#templateList .empty { padding: 18px 12px; text-align: center; font-size: 11.5px; color: var(--muted); }
+.tpl { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); }
+.tpl:last-child { border-bottom: 0; }
+.tpl.chosen { background: var(--raised); box-shadow: inset 2px 0 0 var(--ink); }
+.tpl .pick { flex: 1; min-width: 0; display: block; padding: 7px 9px; border: 0; border-radius: 0; background: none; text-align: left; }
+.tpl .pick strong { display: block; font: 500 11.5px/1.3 var(--sans); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tpl.chosen .pick strong { color: var(--ink); }
+.tpl .pick small { display: block; margin-top: 2px; font: 400 10px/1.3 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.tpl.mismatch .pick small { color: var(--flag); }
+.tpl .drop { min-height: 0; padding: 0 9px; border: 0; border-radius: 0; background: none; color: var(--muted); font-size: 14px; }
+.tpl .drop:hover { background: #2a1d1d; color: var(--danger); }
+#templateName { flex: 3; }
+#saveTemplate { flex: 1; }
+#templatePlan { color: var(--ink-2); overflow-wrap: anywhere; }
+#templateDialog .sheet-foot .filebtn { min-height: 26px; font: 500 11.5px/1 var(--sans); }
+
 /* ---- contact sheet ---------------------------------------------------- */
 
 .contact-grid { flex: 1; min-height: 0; overflow: auto; position: relative; border-top: 1px solid var(--line); background: var(--shell); }

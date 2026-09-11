@@ -78,6 +78,7 @@
         <button id="preview" class="flagged" aria-pressed="false" disabled title="Redaction preview — fill every pipeline zone opaque (R)">Preview</button>
         <button id="detectText" disabled title="Detect burned-in text and suggest boxes (T)">Detect text</button>
         <button id="openContact" disabled title="Review a whole combo as thumbnails (G)">Contact sheet</button>
+        <button id="openTemplates" disabled title="Save and apply named zone layouts">Templates</button>
       </div>
       <div class="zoom" role="group" aria-label="Zoom">
         <button id="zoomOut" aria-label="Zoom out">−</button>
@@ -216,6 +217,41 @@
   </div>
 </dialog>
 
+<dialog id="templateDialog" class="sheet" aria-labelledby="templateTitle">
+  <div class="sheet-head">
+    <div><h2 id="templateTitle">Zone templates</h2><p id="templateSubject" class="note"></p></div>
+    <button id="closeTemplates" class="x" aria-label="Close">×</button>
+  </div>
+  <div class="sheet-body">
+    <fieldset>
+      <legend>Save this frame</legend>
+      <div class="btn-row">
+        <input id="templateName" type="text" placeholder="e.g. iU22 1024×768 — header + DOB" maxlength="80">
+        <button id="saveTemplate" disabled>Save</button>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Saved templates</legend>
+      <div id="templateList"></div>
+    </fieldset>
+    <fieldset id="templateApply" hidden>
+      <legend>Apply to</legend>
+      <label><input type="radio" name="templateScope" value="frame" checked><span>This frame</span></label>
+      <label><input type="radio" name="templateScope" value="file"><span>Every frame of this file <b id="templateFileHint" class="num"></b></span></label>
+      <label><input type="radio" name="templateScope" value="combo"><span>Every frame of every same-size file in this combo <b id="templateComboHint" class="num"></b></span></label>
+      <label class="nested"><input id="templateReplace" type="checkbox"><span>Replace existing zones instead of adding what is missing</span></label>
+    </fieldset>
+    <p class="note">A template is a starting point, not a guarantee. Layouts drift across firmware and operator habit, so applying one still leaves coverage to be checked on the actual images. Templates are stored in this browser and are kept when a workspace is cleared.</p>
+  </div>
+  <div class="sheet-foot">
+    <span id="templatePlan" role="status">—</span>
+    <div class="btn-row">
+      <button id="exportTemplates">Export</button>
+      <label class="filebtn">Import<input id="importTemplates" type="file" accept=".json,application/json"></label>
+      <button id="applyTemplate" class="primary" disabled>Apply</button>
+    </div>
+  </div>
+</dialog>
 <dialog id="contactDialog" class="sheet wide-sheet" aria-labelledby="contactTitle">
   <div class="sheet-head">
     <div><h2 id="contactTitle">Contact sheet</h2><p id="contactSubject" class="note"></p></div>

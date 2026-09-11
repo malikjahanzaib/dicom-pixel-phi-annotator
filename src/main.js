@@ -6,7 +6,8 @@ import { extractLines, suggestionBoxes, coverage, toZone } from './ocr.js';
 import { contactFiles, thumbFlags, scaleZones, gridWindow } from './contact.js';
 import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCounts, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment } from './library.js';
 import { inspectFile } from './import.js';
-import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile } from './storage.js';
+import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile, loadTemplates, putTemplate, deleteTemplate } from './storage.js';
+import { makeTemplate, templateFits, templateSize, sortTemplates, validateTemplateFile, templateFile } from './templates.js';
 // Images stay in local File objects / IndexedDB. The local server serves app assets only.
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d'), viewport = $('viewport');
@@ -586,6 +587,7 @@ function updateImageControls(){
   $('invert').disabled=!decoded;$('resetDisplay').disabled=!decoded;$('invert').setAttribute('aria-pressed',String(!!im?.display.invert));
   $('openTags').disabled=im?.kind!=='DICOM'||!im?.file;
   for(const id of ['drawMode','panMode','zoomIn','zoomOut','fit','actual','hideZones','preview','detectText','openContact'])$(id).disabled=!state.bitmap;
+  $('openTemplates').disabled=!im;
   if(state.ocrBusy)$('detectText').disabled=true;
   $('hideZones').disabled=!state.bitmap||state.preview; // the preview already stands in for it
   if(!gray&&state.mode==='window')setMode('draw');
@@ -785,6 +787,116 @@ $('contactScope').onchange=openContact;
 $('closeContact').onclick=()=>$('contactDialog').close();
 $('contactGrid').addEventListener('scroll',renderContact,{passive:true});
 $('contactDialog').addEventListener('close',()=>{contactPass++;contactEntries=[];contactKey=null;$('contactGrid').replaceChildren();});
+// Zone templates. Applying one runs through planReuse, the same planner Copy to… uses, so
+// merge, dedupe, pricing and per-frame history are identical — a template supplies zones,
+// it does not introduce a second way of writing them.
+let templates=[],chosenTemplate=null;
+const templateScope=()=>document.querySelector('input[name=templateScope]:checked').value;
+function templateTargets(template,scope){
+  const im=current();if(!im||!templateFits(template,im))return [];
+  if(scope==='frame')return [{image:im,frameIndex:im.frameIndex}];
+  const files=scope==='file'?[im]:state.images.filter(other=>
+    (other.combo||'')===(im.combo||'')&&other.width===im.width&&other.height===im.height);
+  return files.flatMap(file=>Array.from({length:file.frameCount},(_,frameIndex)=>({image:file,frameIndex})));
+}
+function templatePlanNow(){
+  if(!chosenTemplate)return null;
+  const mode=$('templateReplace').checked?'replace':'merge';
+  return planReuse(chosenTemplate.zones,templateTargets(chosenTemplate,templateScope()),mode);
+}
+function renderTemplates(){
+  const im=current();
+  $('templateList').replaceChildren();
+  if(!templates.length){
+    const empty=document.createElement('div');empty.className='empty';
+    empty.textContent='No templates yet. Annotate a frame, then save it here.';
+    $('templateList').append(empty);
+  }
+  for(const template of sortTemplates(templates)){
+    const fits=templateFits(template,im);
+    const row=document.createElement('div');
+    row.className='tpl'+(chosenTemplate?.id===template.id?' chosen':'')+(fits?'':' mismatch');
+    const pick=document.createElement('button');pick.className='pick';
+    const name=document.createElement('strong');name.textContent=template.name;
+    const meta=document.createElement('small');
+    meta.textContent=`${template.combo?'combo '+template.combo:'no combo'} · ${templateSize(template)} · ${template.zones.length} zone${template.zones.length===1?'':'s'}${fits?'':' · wrong size'}`;
+    pick.append(name,meta);pick.onclick=()=>{chosenTemplate=template;updateTemplateDialog();};
+    const drop=document.createElement('button');drop.className='drop';drop.textContent='×';
+    drop.setAttribute('aria-label',`Delete template ${template.name}`);
+    drop.onclick=async()=>{
+      if(!confirm(`Delete the template “${template.name}”? Zones already applied from it are unaffected.`))return;
+      templates=templates.filter(t=>t.id!==template.id);
+      if(chosenTemplate?.id===template.id)chosenTemplate=null;
+      if(db)try{await deleteTemplate(db,template.id);}catch{}
+      updateTemplateDialog();
+    };
+    row.append(pick,drop);$('templateList').append(row);
+  }
+}
+function updateTemplateDialog(){
+  const im=current();
+  $('templateSubject').textContent=im?`${im.name} · ${im.width}×${im.height} · ${im.combo?'combo '+im.combo:'no combo'}`:'No file open';
+  $('saveTemplate').disabled=!im||!sourceZones(im,im.frameIndex).length;
+  renderTemplates();
+  const fits=chosenTemplate&&templateFits(chosenTemplate,im);
+  $('templateApply').hidden=!chosenTemplate;
+  for(const [scope,id] of [['file','templateFileHint'],['combo','templateComboHint']]){
+    const n=chosenTemplate?templateTargets(chosenTemplate,scope).length:0;
+    $(id).textContent=`\u00b7 ${n} frame${n===1?'':'s'}`;
+  }
+  if(!chosenTemplate){$('templatePlan').textContent='Choose a template to apply.';$('applyTemplate').disabled=true;return;}
+  if(!fits){
+    // Refused rather than rescaled, and the refusal names where it would work.
+    const elsewhere=state.images.filter(other=>other.width===chosenTemplate.width&&other.height===chosenTemplate.height).length;
+    $('templatePlan').textContent=`“${chosenTemplate.name}” was built for ${templateSize(chosenTemplate)}; this file is ${im?`${im.width}×${im.height}`:'not open'}. Zones are native pixels and are never rescaled.${elsewhere?` ${elsewhere} file${elsewhere===1?'':'s'} in the library ${elsewhere===1?'is':'are'} ${templateSize(chosenTemplate)}.`:''}`;
+    $('applyTemplate').disabled=true;return;
+  }
+  const plan=templatePlanNow();
+  $('templatePlan').textContent=describePlan(plan,chosenTemplate.zones.length);
+  $('applyTemplate').disabled=!plan.frames.length;
+}
+$('openTemplates').onclick=async()=>{
+  cancelDrag();
+  if(db&&!templates.length){try{templates=(await loadTemplates(db))||[];}catch{}}
+  $('templateName').value='';updateTemplateDialog();
+  if(!$('templateDialog').open)$('templateDialog').showModal();
+};
+$('closeTemplates').onclick=()=>$('templateDialog').close();
+$('templateDialog').addEventListener('close',()=>{chosenTemplate=null;});
+$('templateReplace').addEventListener('change',updateTemplateDialog);
+for(const input of document.querySelectorAll('input[name=templateScope]'))input.addEventListener('change',updateTemplateDialog);
+$('saveTemplate').onclick=async()=>{
+  const im=current();if(!im)return;
+  try{
+    const template=makeTemplate({name:$('templateName').value,image:im,zones:sourceZones(im,im.frameIndex)});
+    templates=[...templates.filter(t=>t.id!==template.id),template];
+    chosenTemplate=template;$('templateName').value='';
+    if(db)try{await putTemplate(db,template);}catch{storageFailed('Template not saved · storage unavailable');}
+    updateTemplateDialog();
+    $('message').textContent=`Saved template “${template.name}” · ${template.zones.length} zone${template.zones.length===1?'':'s'} at ${templateSize(template)}.`;
+  }catch(error){$('templatePlan').textContent=error.message;}
+};
+$('applyTemplate').onclick=()=>{
+  const plan=templatePlanNow();if(!plan?.frames.length)return;
+  if(plan.replaced&&!confirm(`Replace ${plan.replaced} existing box${plan.replaced===1?'':'es'} in ${plan.frames.length} frame${plan.frames.length===1?'':'s'}? Each frame can be undone on its own.`))return;
+  $('templateDialog').close();commitReuse(plan,chosenTemplate.zones.length);
+};
+$('exportTemplates').onclick=()=>{
+  if(!templates.length){$('templatePlan').textContent='There are no templates to export.';return;}
+  downloadJSON(templateFile(sortTemplates(templates)),'pixel-zone-templates.json');
+};
+$('importTemplates').onchange=async e=>{
+  const file=e.target.files[0];e.target.value='';if(!file)return;
+  try{
+    const incoming=validateTemplateFile(JSON.parse(await file.text()));
+    const known=new Set(templates.map(t=>t.id));
+    const added=incoming.filter(t=>!known.has(t.id));
+    templates=[...templates,...added];
+    if(db)for(const template of added){try{await putTemplate(db,template);}catch{}}
+    updateTemplateDialog();
+    $('templatePlan').textContent=`Imported ${added.length} template${added.length===1?'':'s'}${incoming.length-added.length?` · ${incoming.length-added.length} already present`:''}.`;
+  }catch(error){$('templatePlan').textContent=`Templates not imported: ${error.message}`;}
+};
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 $('backup').onclick=()=>{downloadJSON({format:'pixel-zone-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'pixel-zone-annotations.json');};
 $('restoreBackup').onchange=async e=>{
@@ -804,7 +916,7 @@ $('removeImage').onclick=async()=>{
   if(db)try{await removeFile(db,im.id);}catch{storageFailed();}persist();
 };
 $('clearWorkspace').onclick=async()=>{
-  if(importing)return;if(!confirm('Delete every imported image and annotation from this browser? Source files are untouched.'))return;
+  if(importing)return;if(!confirm('Delete every imported image and annotation from this browser? Source files and saved templates are untouched.'))return;
   cancelDrag();clearTimeout(saveTimer);revision++;await saving;
   try{if(db)await clearSession(db);}catch{storageFailed('Could not clear browser storage.');return;}
   state.images=[];resetView();persistenceFailed=false;persist();$('message').textContent='Workspace cleared.';

@@ -23,7 +23,9 @@ async function draw(x,y,right,bottom,w=640,h=480){
 }
 const noOverflow=async label=>{for(const selector of ['.annotation-actions','.frame-strip','.toolbar'])
  assert.ok(await page.locator(selector).evaluate(e=>e.scrollWidth<=e.clientWidth+1),`${selector} overflows at ${label}`);};
-async function exportJson(button){if(button==='#backup')await page.locator('#workspaceMenu').evaluate(e=>e.open=true);const pending=page.waitForEvent('download');await page.locator(button).click();const download=await pending;return JSON.parse(await fs.readFile(await download.path(),'utf8'));}
+async function exportJson(button,then){if(button==='#backup')await page.locator('#workspaceMenu').evaluate(e=>e.open=true);
+ if(then){await page.locator(button).click();button=then;}
+ const pending=page.waitForEvent('download');await page.locator(button).click();const download=await pending;return JSON.parse(await fs.readFile(await download.path(),'utf8'));}
 try{
  await page.goto(origin);await page.waitForFunction(()=>!document.getElementById('files').disabled);
  await page.locator('#files').setInputFiles(['combo16_640x480_s1.dcm','combo16_1024x768_s1.dcm','rle.dcm','signed16.dcm','mono1.dcm','rgb.dcm','broken.dcm'].map(n=>path.join(fixtureDir,n)));
@@ -358,6 +360,48 @@ try{
  await page.waitForFunction(()=>document.getElementById('viewTitle').textContent.includes('rgb.dcm'));
  await open('combo16_640x480');
  console.log('PASS contact sheet: merged layout overlaid on lazily decoded thumbnails, scoped, flagged, and clickable.');
+ // Zone templates: save a layout, apply it cold to another file of the same raster.
+ await open('combo16_640x480');
+ await page.locator('#openTemplates').click();
+ await page.waitForFunction(()=>document.getElementById('templateDialog').open);
+ assert.match(await page.locator('#templateList').textContent(),/No templates yet/);
+ await page.locator('#templateName').fill('iU22 header + DOB');
+ await page.locator('#saveTemplate').click();
+ await page.waitForFunction(()=>!document.querySelector('#templateList .empty'));
+ assert.match(await page.locator('#templateList .tpl').first().textContent(),/iU22 header \+ DOB/);
+ assert.match(await page.locator('#templateList .tpl').first().textContent(),/combo 16 · 640×480 · \d+ zones/);
+ // Selecting it prices the operation before anything is written, exactly like Copy to….
+ await page.locator('#templateList .pick').first().click();
+ assert.match(await page.locator('#templatePlan').textContent(),/already has these boxes|boxes into/);
+ // A template is refused on another raster rather than rescaled, and says where it fits.
+ await page.locator('#closeTemplates').click();
+ await page.locator('#library .library-item').filter({hasText:'combo16_1024x768'}).click();
+ await page.waitForFunction(()=>document.getElementById('viewTitle').textContent.includes('combo16_1024x768'));
+ await page.locator('#openTemplates').click();
+ await page.locator('#templateList .pick').first().click();
+ assert.match(await page.locator('#templatePlan').textContent(),/built for 640×480; this file is 1024×768/);
+ assert.match(await page.locator('#templatePlan').textContent(),/never rescaled/);
+ assert.equal(await page.locator('#applyTemplate').isDisabled(),true);
+ await page.screenshot({path:'.test-output/templates.png'});
+ // Applied cold to a fresh same-size file: no reference file open, zones land natively.
+ await page.locator('#closeTemplates').click();
+ await open('combo44_640x480');
+ const before=await page.locator('#zones .zone').count();
+ await page.locator('#openTemplates').click();
+ await page.locator('#templateList .pick').first().click();
+ await page.locator('input[name=templateScope][value="file"]').check();
+ assert.match(await page.locator('#templatePlan').textContent(),/boxes into 1 frame across 1 file/);
+ await page.locator('#applyTemplate').click();
+ await page.waitForFunction(()=>!document.getElementById('templateDialog').open);
+ assert.ok(await page.locator('#zones .zone').count()>before);
+ assert.match(await page.locator('#zones').textContent(),/patient strip/);
+ // Templates outlive the workspace and the session: they are in their own store.
+ const exported=await exportJson('#openTemplates','#exportTemplates');
+ assert.equal(exported.format,'pixel-zone-templates');
+ assert.equal(exported.templates.length,1);
+ assert.deepEqual(Object.keys(exported.templates[0]).sort(),['combo','createdAt','height','id','name','width','zones']);
+ await page.locator('#closeTemplates').click();
+ console.log('PASS zone templates: saved, priced, refused on a size mismatch, applied cold, and exported.');
  await page.setViewportSize({width:760,height:1000}); await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
  await page.setViewportSize({width:600,height:900});await noOverflow('600px');await page.setViewportSize({width:1500,height:1100});
 
