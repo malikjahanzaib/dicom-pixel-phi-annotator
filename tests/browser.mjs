@@ -371,7 +371,11 @@ try{
  assert.equal(await page.locator('#zones .zone').count(),0);
  await page.locator('#ocrList .ocr-accept').first().click();
  assert.equal(await page.locator('#zones .zone').count(),1);
- assert.match(await page.locator('#note').inputValue(),/SMITH/i);
+ // The recognised string is PHI. It is readable on screen while deciding, and must not be
+ // written into the note, which is persisted, backed up, shared in templates and exported.
+ assert.equal(await page.locator('#note').inputValue(),'detected text');
+ assert.doesNotMatch(await page.locator('#note').inputValue(),/SMITH|1985/i);
+ assert.doesNotMatch(await page.locator('#zones').textContent(),/SMITH|1985/i);
  // The accepted box is padded outwards from the glyph bounds and sits in native pixels.
  const box=await page.locator('#zones .zone small').first().textContent();
  const [,bx,by,bw]=box.match(/x=(\d+), y=(\d+), w=(\d+)/).map(Number);
@@ -397,6 +401,12 @@ try{
  assert.equal(await page.locator('#ocrList').textContent(),'');
  assert.match(await page.locator('#ocrStatus').textContent(),/No text regions detected on this frame\. That is not a finding of "no text"\./);
  console.log(`PASS OCR offline: ${detected} line suggestions, padded and clamped, accepted only on request, no completeness claim.`);
+ // Nothing the engine read reaches a file that leaves this machine.
+ const afterOcr=await exportJson('#export');
+ assert.doesNotMatch(JSON.stringify(afterOcr),/SMITH|JANE|1985/i,'the export must not carry recognised text');
+ await page.locator('#workspaceMenu').evaluate(e=>e.open=true);
+ const backupAfterOcr=await exportJson('#backup');
+ assert.doesNotMatch(JSON.stringify(backupAfterOcr),/SMITH|JANE|1985/i,'nor may a project backup');
  // Contact sheet: a whole combo as thumbnails, each carrying the merged pipeline layout.
  await open('combo16_640x480');
  await page.locator('#openContact').click();
@@ -546,7 +556,24 @@ try{
  assert.equal(await page.locator('#layoutList .layout').count(),1,'an emptied layout is dropped');
  assert.equal(Number((await page.locator('#total').textContent()).match(/\d+/)[0]),zonesBefore);
  console.log('PASS annotations.json import: standalone layouts, held out of the export until promoted, and round-tripped.');
- await page.setViewportSize({width:760,height:1000}); await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
+ // Clearing notes: the remedy for text that should never have been written into one.
+ // Runs last, because it deliberately empties every note in the workspace.
+ await open('combo16_640x480');
+ await page.locator('#zones .zone .choose').first().click();
+ const geometry=await page.locator('#boxReadout').textContent();
+ await page.locator('#note').fill('SMITH JANE');await page.locator('#note').press('Tab');
+ await page.locator('#workspaceMenu').evaluate(e=>e.open=true);
+ await page.locator('#clearNotes').click();
+ await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Cleared'));
+ await page.locator('#workspaceMenu').evaluate(e=>e.open=false);
+ assert.match(await page.locator('#message').textContent(),/Box positions are unchanged/);
+ assert.doesNotMatch(await page.locator('#zones').textContent(),/SMITH/i);
+ await page.locator('#zones .zone .choose').first().click();
+ assert.equal(await page.locator('#boxReadout').textContent(),geometry,'geometry survives the scrub');
+ const scrubbed=await exportJson('#export');
+ assert.doesNotMatch(JSON.stringify(scrubbed),/SMITH/i,'nothing leaving the machine carries it');
+ console.log('PASS notes never receive recognised text, and can be scrubbed without moving a box.');
+ await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
  await page.setViewportSize({width:600,height:900});await noOverflow('600px');await page.setViewportSize({width:1500,height:1100});
 
  assert.deepEqual(errors,[]);assert.deepEqual(requests.filter(r=>!r.url.startsWith(origin)&&!r.url.startsWith('blob:')&&!r.url.startsWith('data:')),[]);assert.ok(requests.every(r=>r.method==='GET'));console.log('PASS explicit combo assignment, frame-preserving backup, no external requests or upload API calls.');

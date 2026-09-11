@@ -609,11 +609,11 @@ function updateOcrPanel(status){
   for(const box of boxes){
     const row=document.createElement('div');row.className='ocr-row'+(coveredBySomeZone(box,im?.zones||[])?' covered':'');
     const accept=document.createElement('button');accept.className='ocr-accept';
-    const text=document.createElement('strong');text.textContent=box.note;
+    const text=document.createElement('strong');text.textContent=box.text;
     const meta=document.createElement('small');meta.textContent=`${box.x},${box.y} · ${box.width}×${box.height} · ${box.confidence}%`;
     accept.append(text,meta);accept.title='Accept as a zone';accept.onclick=()=>acceptSuggestion(box);
     const drop=document.createElement('button');drop.className='ocr-drop';drop.textContent='×';
-    drop.setAttribute('aria-label',`Dismiss ${box.note}`);drop.onclick=()=>dismissSuggestion(box);
+    drop.setAttribute('aria-label',`Dismiss the detection at ${box.x},${box.y}`);drop.onclick=()=>dismissSuggestion(box);
     row.append(accept,drop);$('ocrList').append(row);
   }
 }
@@ -1067,6 +1067,37 @@ $('removeImage').onclick=async()=>{
   if(!current()||importing)return;const im=current();if(!confirm(`Remove ${im.name} and its annotations from this workspace?`))return;
   cancelDrag();state.images.splice(state.index,1);if(state.images.length)await showImage(Math.min(state.index,state.images.length-1));else resetView();
   if(db)try{await removeFile(db,im.id);}catch{storageFailed();}persist();
+};
+// Notes travel: into the workspace, into project backups, into templates meant to be
+// shared, and into the pipeline export. This is how text that should never have been
+// written into one gets removed without disturbing a single box position.
+function countNotes(){
+  let n=0;
+  for(const im of state.images)for(const zones of Object.values(im.frames))for(const zone of zones)if(zone.note)n++;
+  for(const layout of state.layouts)for(const zone of layout.zones)if(zone.note)n++;
+  for(const template of templates)for(const zone of template.zones)if(zone.note)n++;
+  return n;
+}
+$('clearNotes').onclick=async()=>{
+  if(db&&!templates.length){try{templates=(await loadTemplates(db))||[];}catch{}}
+  const total=countNotes();
+  if(!total){$('message').textContent='No notes to clear.';return;}
+  if(!confirm(`Clear the text from ${total} note${total===1?'':'s'}?\n\nNotes are written into the pipeline export, project backups and templates, so this is how text that should not leave this machine is removed from them. Every box keeps its position, and each frame can be undone on its own.`))return;
+  for(const im of state.images)for(const [frame,zones] of Object.entries(im.frames)){
+    if(!zones.some(zone=>zone.note))continue;
+    const index=Number(frame);
+    ensureHistory(im,index);
+    for(const zone of zones)zone.note='';
+    rememberHistory(im,index);
+  }
+  for(const layout of state.layouts)for(const zone of layout.zones)zone.note='';
+  for(const template of templates){
+    if(!template.zones.some(zone=>zone.note))continue;
+    for(const zone of template.zones)zone.note='';
+    if(db)try{await putTemplate(db,template);}catch{}
+  }
+  state.dirty=true;persist();updateZones();updateLibrary();updateLayoutPanel();render();
+  $('message').textContent=`Cleared ${total} note${total===1?'':'s'}. Box positions are unchanged.`;
 };
 $('clearWorkspace').onclick=async()=>{
   if(importing)return;if(!confirm('Delete every imported image and annotation from this browser? Source files and saved templates are untouched.'))return;

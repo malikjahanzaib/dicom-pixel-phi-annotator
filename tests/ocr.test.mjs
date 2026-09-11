@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractLines, suggestionBoxes, isCovered, coverage, toZone, aboveConfidence, OCR_PADDING, DEFAULT_CONFIDENCE } from '../src/ocr.js';
+import { extractLines, suggestionBoxes, isCovered, coverage, toZone, aboveConfidence, OCR_PADDING, DEFAULT_CONFIDENCE, ACCEPTED_NOTE } from '../src/ocr.js';
 const image = { width: 640, height: 480 };
 const line = (x0, y0, x1, y1, text = 'SMITH^JANE', confidence = 88) => ({ bbox: { x0, y0, x1, y1 }, text, confidence });
 
@@ -16,7 +16,7 @@ test('lines are read whether the engine reports them flat or nested',()=>{
 test('a detection becomes a padded, clamped, native-pixel box',()=>{
   const [box] = suggestionBoxes([line(100, 50, 300, 70)], image);
   // Padded outwards on every side: tight bounds clip glyphs, and a clipped box uncovers text.
-  assert.deepEqual(box, { x: 100-OCR_PADDING, y: 50-OCR_PADDING, width: 200+2*OCR_PADDING, height: 20+2*OCR_PADDING, note: 'SMITH^JANE', confidence: 88 });
+  assert.deepEqual(box, { x: 100-OCR_PADDING, y: 50-OCR_PADDING, width: 200+2*OCR_PADDING, height: 20+2*OCR_PADDING, text: 'SMITH^JANE', confidence: 88 });
   // Padding never escapes the raster, so an accepted box is always a legal zone.
   const [edge] = suggestionBoxes([line(0, 0, 640, 12)], image);
   assert.deepEqual([edge.x, edge.y, edge.width, edge.height], [0, 0, 640, 16]);
@@ -37,8 +37,8 @@ test('noise, empty boxes and duplicates never reach the operator',()=>{
   assert.equal(suggestionBoxes([line(10,10,80,20), line(10,10,80,20)], image).length, 1);
   // Text is collapsed to one line and capped, so a note stays readable in the list.
   const [box] = suggestionBoxes([line(10,10,300,30,'  ACC\n 12345\t678  ')], image);
-  assert.equal(box.note, 'ACC 12345 678');
-  assert.equal(suggestionBoxes([line(10,10,400,30,'A'.repeat(200))], image)[0].note.length, 80);
+  assert.equal(box.text, 'ACC 12345 678');
+  assert.equal(suggestionBoxes([line(10,10,400,30,'A'.repeat(200))], image)[0].text.length, 80);
 });
 
 test('coverage is reported conservatively: partial overlap is not covered',()=>{
@@ -56,10 +56,19 @@ test('coverage is reported conservatively: partial overlap is not covered',()=>{
   assert.deepEqual(report.boxes, [box]);
 });
 
-test('accepting a suggestion drops everything the export must not carry',()=>{
-  const [box] = suggestionBoxes([line(100,50,300,70)], image);
-  assert.deepEqual(Object.keys(toZone(box)), ['x','y','width','height','note']);
-  assert.equal('confidence' in toZone(box), false);
+test('accepting a suggestion never carries the recognised text into the zone',()=>{
+  const [box] = suggestionBoxes([line(100,50,300,70,'SMITH^JANE 1985-03-12')], image);
+  const zone = toZone(box);
+  assert.deepEqual(Object.keys(zone), ['x','y','width','height','note']);
+  // The recognised string IS the PHI. A note is persisted, backed up, shared in templates
+  // and emitted in the export, so it must never receive it.
+  assert.equal(zone.note, ACCEPTED_NOTE);
+  assert.doesNotMatch(zone.note, /SMITH|1985/);
+  assert.equal(JSON.stringify(zone).includes('SMITH'), false);
+  assert.equal('text' in zone, false, 'the text does not ride along under another key');
+  assert.equal('confidence' in zone, false);
+  // It stays available in memory for the operator to read while deciding.
+  assert.equal(box.text, 'SMITH^JANE 1985-03-12');
 });
 
 test('the confidence floor hides weak detections without discarding them',()=>{
@@ -70,7 +79,7 @@ test('the confidence floor hides weak detections without discarding them',()=>{
     line(10,180,600,200,'r ee te',44),
   ], image);
   assert.equal(boxes.length, 4, 'everything the engine returned is kept');
-  assert.deepEqual(aboveConfidence(boxes, DEFAULT_CONFIDENCE).map(b=>b.note), ['LEFT RETROAREOLAR','AREA OF PAIN']);
+  assert.deepEqual(aboveConfidence(boxes, DEFAULT_CONFIDENCE).map(b=>b.text), ['LEFT RETROAREOLAR','AREA OF PAIN']);
   // Lowering the floor reveals them again — no second run of the engine is needed.
   assert.equal(aboveConfidence(boxes, 40).length, 3);
   assert.equal(aboveConfidence(boxes, 0).length, 4);

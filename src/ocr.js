@@ -7,7 +7,13 @@ import { clamp } from './coordinates.js';
 // Tight OCR bounds clip glyph edges, and a clipped PHI box uncovers text. Padding out is
 // the safe direction; padding in is not.
 export const OCR_PADDING = 4;
-export const MAX_NOTE = 80;
+export const MAX_TEXT = 80;
+// What an accepted suggestion is labelled. The recognised string is NOT used: it is the
+// PHI itself, and a note is persisted to the workspace, written into project backups and
+// templates meant to be shared, and emitted in the pipeline export. Detected text stays
+// on screen, in memory, for the operator to read while deciding — it never lands in a
+// field that leaves this machine.
+export const ACCEPTED_NOTE = 'detected text';
 // Speckle in an ultrasound reads to the engine as low-confidence text lines. The operator
 // sets the floor, because where it belongs depends on the modality and the overlay: a
 // clean DICOM annotation burn scores high, a caption over tissue does not.
@@ -18,7 +24,7 @@ export const MIN_TEXT = 2;
 
 // A line with no alphanumeric character is engine noise over anatomy, not text.
 const readable = text => (String(text || '').match(/[a-z0-9]/gi) || []).length >= MIN_TEXT;
-const cleanText = text => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_NOTE);
+const cleanText = text => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT);
 const key = box => `${box.x}|${box.y}|${box.width}|${box.height}`;
 
 // Versions of the engine report lines either flat or nested under blocks and paragraphs.
@@ -40,8 +46,10 @@ export function suggestionBoxes(lines, image, padding = OCR_PADDING) {
     const y = clamp(Math.round(bounds.y0) - padding, 0, image.height);
     const right = clamp(Math.round(bounds.x1) + padding, 0, image.width);
     const bottom = clamp(Math.round(bounds.y1) + padding, 0, image.height);
+    // Held as `text`, deliberately not as `note`: nothing named `note` survives into
+    // storage or an export without the operator having written it.
     const box = { x, y, width: right - x, height: bottom - y,
-      note: cleanText(line.text), confidence: Math.round(Number(line.confidence) || 0) };
+      text: cleanText(line.text), confidence: Math.round(Number(line.confidence) || 0) };
     if (box.width < 1 || box.height < 1 || seen.has(key(box))) continue;
     seen.add(key(box));
     boxes.push(box);
@@ -66,4 +74,4 @@ export function coverage(suggestions, zones) {
   return { detected: suggestions.length, uncovered: uncovered.length, boxes: uncovered };
 }
 
-export const toZone = ({ x, y, width, height, note }) => ({ x, y, width, height, note });
+export const toZone = ({ x, y, width, height }) => ({ x, y, width, height, note: ACCEPTED_NOTE });

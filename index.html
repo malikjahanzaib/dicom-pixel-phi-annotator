@@ -20,6 +20,7 @@
         <label class="filebtn">Restore backup<input id="restoreBackup" type="file" accept=".json,application/json"></label>
         <label class="filebtn">Import annotations.json<input id="importPipeline" type="file" accept=".json,application/json"></label>
         <p class="note">Backups hold boxes and file hashes. Image data stays in this browser.</p>
+        <button id="clearNotes">Clear all notes</button>
         <button id="clearWorkspace" class="danger">Clear workspace</button>
       </div>
     </details>
@@ -131,13 +132,13 @@
             <label>H<input id="height" type="number" step="1" min="1"></label>
           </div>
           <label id="noteLabel" for="note">Note</label>
-          <textarea id="note" rows="2" placeholder="Patient name, DOB, accession…"></textarea>
+          <textarea id="note" rows="2" placeholder="What kind of field this is — e.g. name strip, DOB band"></textarea>
           <button id="deleteSelected" class="wide danger">Delete box</button>
         </div>
       </section>
       <section id="ocrSection" hidden>
         <div class="rail-title"><h2>Detected text</h2><span id="ocrCount" class="num">0</span></div>
-        <p class="caveat" id="ocrCaveat">OCR misses text, especially low-contrast overlays. It shows where text was found — never that an image is clean. Coverage remains yours to confirm.</p>
+        <p class="caveat" id="ocrCaveat">OCR misses text, especially low-contrast overlays. It shows where text was found — never that an image is clean. Coverage remains yours to confirm. Recognised text is shown here only; it is never saved into a note, because a note is exported.</p>
         <label class="slider" for="ocrConfidence">
           <span>Confidence floor</span><b id="ocrConfidenceValue" class="num">60%</b>
         </label>
