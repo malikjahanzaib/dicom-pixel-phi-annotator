@@ -5,10 +5,11 @@ import { sourceZones, reuseTargets, planReuse, applyPlan, describePlan } from '.
 import { extractLines, suggestionBoxes, coverage, toZone, aboveConfidence, DEFAULT_CONFIDENCE } from './ocr.js';
 import { contactFiles, thumbFlags, scaleZones, gridWindow } from './contact.js';
 import { deviceLabel, deviceDetail, hasDevice } from './device.js';
-import { EXPORT_FORMATS, DEFAULT_FORMAT, buildExport, comboConflicts, describeConflicts } from './export.js';
+import { EXPORT_FORMATS, DEFAULT_FORMAT, buildExport, comboConflicts, describeConflicts, exportRows, customFormatId, findFormat } from './export.js';
+import { validateSchema, applySchema, validateSchemaFile, schemaFile, EXAMPLE_SCHEMA } from './schema.js';
 import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCounts, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment } from './library.js';
 import { inspectFile } from './import.js';
-import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile, loadTemplates, putTemplate, deleteTemplate } from './storage.js';
+import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile, loadTemplates, putTemplate, deleteTemplate, loadSchemas, putSchema, deleteSchema } from './storage.js';
 import { makeTemplate, templateFits, templateSize, sortTemplates, validateTemplateFile, templateFile } from './templates.js';
 import { validatePipelineFile, mergeImported, layoutKey } from './layouts.js';
 // Images stay in local File objects / IndexedDB. The local server serves app assets only.
@@ -27,7 +28,8 @@ function toNative(clientX,clientY,bounded=true) {
   const p={x:((clientX-r.left)*cssWidth/r.width-v.x)/v.scale, y:((clientY-r.top)*cssHeight/r.height-v.y)/v.scale};
   return bounded && im ? {x:clamp(p.x,0,im.width), y:clamp(p.y,0,im.height)} : p;
 }
-const exportFormat=()=>EXPORT_FORMATS.find(f=>f.id===state.format)||EXPORT_FORMATS[0];
+let schemas=[],chosenSchema=null;
+const exportFormat=()=>findFormat(state.format,schemas);
 function changed() { flushNudge(); state.dirty=true; rememberHistory(); persist(); $('exportStatus').textContent='Unexported changes.'; updateLibrary(); }
 function updateSummary() {
   const groups=new Map(); let count=0,unassigned=0;
@@ -298,6 +300,8 @@ window.addEventListener('blur',()=>{state.space=false;cancelDrag();});
 // which schema was produced is never a guess.
 function updateExportFormat(){
   const format=exportFormat(),conflicts=comboConflicts(state.images);
+  $('exportFormat').replaceChildren(...[...EXPORT_FORMATS,...schemas.map(schema=>({id:customFormatId(schema),label:`${schema.name} (custom)`}))]
+    .map(option=>{const el=document.createElement('option');el.value=option.id;el.textContent=option.label;return el;}));
   $('exportFormat').value=format.id;
   $('exportFormatHint').textContent=format.hint;
   $('export').textContent=`Export ${format.label}`;
@@ -311,7 +315,7 @@ $('export').onclick=()=>{
   if(state.drag)finishDrag();
   const format=exportFormat(),conflicts=comboConflicts(state.images);
   if(conflicts.length&&!confirm(`${describeConflicts(conflicts)}\n\nThe tags win, so these export as separate device combinations. Continue?`))return;
-  const payload=buildExport(format.id,state.images,state.layouts);
+  const payload=buildExport(format.id,state.images,state.layouts,schemas);
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\n'],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download=format.file;document.body.append(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),60000);$('exportStatus').textContent=`Exported ${format.label}.`;}catch(error){$('exportStatus').textContent=error.message;}
@@ -1050,6 +1054,90 @@ $('importPipeline').onchange=async e=>{
     $('message').textContent=`Imported ${added} layout${added===1?'':'s'}${merged?` · ${merged} zone${merged===1?'':'s'} merged`:''}. Nothing is exported until you promote it.`;
   }catch(error){$('message').textContent=`Layout not imported: ${error.message}`;}
 };
+// Custom schemas. A definition is validated the moment it is typed and previewed against
+// the real workspace, so what the file will contain is visible before it is written.
+function renderSchemaList(){
+  $('schemaCount').textContent=String(schemas.length);
+  $('schemaList').replaceChildren();
+  if(!schemas.length){
+    const empty=document.createElement('div');empty.className='empty';
+    empty.textContent='No custom schemas yet. Load the example to start from something real.';
+    $('schemaList').append(empty);
+  }
+  for(const schema of schemas){
+    const row=document.createElement('div');row.className='sch'+(chosenSchema?.id===schema.id?' chosen':'');
+    const pick=document.createElement('button');pick.className='pick';
+    const name=document.createElement('strong');name.textContent=schema.name;
+    const meta=document.createElement('small');
+    meta.textContent=`${schema.shape} · by ${schema.group_by} · ${Object.keys(schema.entry).length} entry field${Object.keys(schema.entry).length===1?'':'s'}`;
+    pick.append(name,meta);
+    pick.onclick=()=>{chosenSchema=schema;$('schemaText').value=JSON.stringify(schema,null,2);renderSchemaList();previewSchema();};
+    const drop=document.createElement('button');drop.className='drop';drop.textContent='×';
+    drop.setAttribute('aria-label',`Delete schema ${schema.name}`);
+    drop.onclick=async()=>{
+      if(!confirm(`Delete the schema “${schema.name}”? Exports already written are unaffected.`))return;
+      schemas=schemas.filter(entry=>entry.id!==schema.id);
+      if(chosenSchema?.id===schema.id)chosenSchema=null;
+      if(state.format===customFormatId(schema))state.format=DEFAULT_FORMAT;
+      if(db)try{await deleteSchema(db,schema.id);}catch{}
+      renderSchemaList();previewSchema();updateSummary();
+    };
+    row.append(pick,drop);$('schemaList').append(row);
+  }
+}
+function previewSchema(){
+  const text=$('schemaText').value.trim();
+  if(!text){$('schemaState').textContent='';$('schemaState').className='num';$('schemaPreview').textContent='';return null;}
+  let schema;
+  try{schema=validateSchema(JSON.parse(text));}
+  catch(error){
+    $('schemaState').textContent='invalid';$('schemaState').className='num bad';
+    $('schemaPreview').textContent=error.message;return null;
+  }
+  $('schemaState').textContent='valid';$('schemaState').className='num good';
+  const rows=exportRows(state.images,state.layouts,schema.group_by);
+  const sample=applySchema(schema,rows.slice(0,1));
+  $('schemaPreview').textContent=rows.length
+    ?JSON.stringify(sample,null,2)
+    :JSON.stringify(applySchema(schema,[]),null,2)+'\n\n// No annotated files yet, so there are no entries to show.';
+  return schema;
+}
+$('openSchemas').onclick=async()=>{
+  cancelDrag();
+  if(db&&!schemas.length){try{schemas=(await loadSchemas(db))||[];}catch{}}
+  renderSchemaList();previewSchema();
+  $('schemaMessage').textContent=schemas.length?'Choose a schema to edit, or write a new one.':'Load the example, adjust it, then save.';
+  if(!$('schemaDialog').open)$('schemaDialog').showModal();
+};
+$('closeSchemas').onclick=$('doneSchemas').onclick=()=>{$('schemaDialog').close();updateSummary();};
+$('schemaText').addEventListener('input',previewSchema);
+$('schemaExample').onclick=()=>{chosenSchema=null;$('schemaText').value=JSON.stringify(EXAMPLE_SCHEMA,null,2);renderSchemaList();previewSchema();};
+$('saveSchema').onclick=async()=>{
+  const schema=previewSchema();
+  if(!schema){$('schemaMessage').textContent='Fix the definition before saving — the problem is shown in the preview.';return;}
+  if(chosenSchema)schema.id=chosenSchema.id;
+  schemas=[...schemas.filter(entry=>entry.id!==schema.id),schema];
+  chosenSchema=schema;
+  if(db)try{await putSchema(db,schema);}catch{storageFailed('Schema not saved · storage unavailable');}
+  renderSchemaList();updateSummary();
+  $('schemaMessage').textContent=`Saved “${schema.name}”. It is now in the export format list.`;
+};
+$('exportSchemas').onclick=()=>{
+  if(!schemas.length){$('schemaMessage').textContent='There are no schemas to export.';return;}
+  downloadJSON(schemaFile(schemas),'occlude-schemas.json');
+};
+$('importSchemas').onchange=async e=>{
+  const file=e.target.files[0];e.target.value='';if(!file)return;
+  try{
+    const incoming=validateSchemaFile(JSON.parse(await file.text()));
+    const known=new Set(schemas.map(schema=>schema.id));
+    const added=incoming.filter(schema=>!known.has(schema.id));
+    schemas=[...schemas,...added];
+    if(db)for(const schema of added){try{await putSchema(db,schema);}catch{}}
+    renderSchemaList();updateSummary();
+    $('schemaMessage').textContent=`Imported ${added.length} schema${added.length===1?'':'s'}${incoming.length-added.length?` · ${incoming.length-added.length} already present`:''}.`;
+  }catch(error){$('schemaMessage').textContent=`Not imported: ${error.message}`;}
+};
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 $('backup').onclick=()=>{downloadJSON({format:'occlude-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'occlude-annotations.json');};
 $('restoreBackup').onchange=async e=>{
@@ -1130,6 +1218,7 @@ async function initialize(){
           [l.combo,{[`${l.width}x${l.height}`]:{ref_width:l.width,ref_height:l.height,zones:l.zones}}]))})
           .map(l=>({...l,promoted:promoted.has(layoutKey(l))}));
       }catch{state.layouts=[];}}
+    try{schemas=(await loadSchemas(db))||[];}catch{}
     if(!ownsWorkspace){db.close();db=null;persistenceFailed=true;}
     ready=true;$('saveStatus').textContent=ownsWorkspace?'Saved locally':'Not saving · another tab is open';
     if(state.images.length)await showImage(Math.max(0,state.images.findIndex(im=>im.id===saved.activeId)));

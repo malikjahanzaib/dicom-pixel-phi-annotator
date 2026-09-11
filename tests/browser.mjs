@@ -573,6 +573,52 @@ try{
  const scrubbed=await exportJson('#export');
  assert.doesNotMatch(JSON.stringify(scrubbed),/SMITH/i,'nothing leaving the machine carries it');
  console.log('PASS notes never receive recognised text, and can be scrubbed without moving a box.');
+ // A custom schema: defined in the app, validated as it is typed, previewed against the
+ // real workspace, then selectable as an export format alongside the two presets.
+ await page.locator('#openSchemas').click();
+ await page.waitForFunction(()=>document.getElementById('schemaDialog').open);
+ assert.match(await page.locator('#schemaList').textContent(),/No custom schemas yet/);
+ // Invalid input is refused with the reason, in the preview, before anything is saved.
+ await page.locator('#schemaText').fill('{"name":"Broken","zone":{"x":"left"}}');
+ assert.equal(await page.locator('#schemaState').textContent(),'invalid');
+ assert.match(await page.locator('#schemaPreview').textContent(),/zone\.x reads "left"/);
+ await page.locator('#saveSchema').click();
+ assert.match(await page.locator('#schemaMessage').textContent(),/Fix the definition before saving/);
+ assert.match(await page.locator('#schemaList').textContent(),/No custom schemas yet/);
+ // The worked example validates and previews real rows from this workspace.
+ await page.locator('#schemaExample').click();
+ assert.equal(await page.locator('#schemaState').textContent(),'valid');
+ assert.match(await page.locator('#schemaPreview').textContent(),/"redaction_zones"/);
+ assert.match(await page.locator('#schemaPreview').textContent(),/"manufacturer": "GE Medical Systems"/);
+ await page.locator('#saveSchema').click();
+ await page.waitForFunction(()=>document.querySelectorAll('#schemaList .sch').length===1);
+ assert.match(await page.locator('#schemaMessage').textContent(),/now in the export format list/);
+ const schemaJson=await exportJson('#exportSchemas');
+ assert.equal(schemaJson.format,'occlude-schema');
+ assert.equal(schemaJson.schemas.length,1);
+ await page.locator('#doneSchemas').click();
+ // It appears in the selector beside the presets, and produces its own shape.
+ const formats=await page.locator('#exportFormat option').allTextContents();
+ assert.deepEqual(formats,['Attributes (v2)','Combo (v1, legacy)','Repository rows (custom)']);
+ await page.locator('#exportFormat').selectOption({label:'Repository rows (custom)'});
+ assert.match(await page.locator('#export').textContent(),/Repository rows \(custom\)/);
+ const custom=await exportJson('#export');
+ assert.equal(custom.schema_version,3);
+ assert.ok(Array.isArray(custom.annotations));
+ const row=custom.annotations[0];
+ assert.deepEqual(Object.keys(row).sort(),
+   ['combination_id','file_count','image_height','image_width','manufacturer','model','redaction_zones','software_version','sop_class'].sort());
+ assert.equal(row.redaction_zones[0].label,'Redact');
+ // Coordinates are the same native pixels the presets emit — a schema renames, never computes.
+ await page.locator('#exportFormat').selectOption('v2');
+ const v2again=await exportJson('#export');
+ const sameEntry=v2again.annotations.find(a=>a.model===row.model&&a.software_version===row.software_version);
+ const v2zone=sameEntry.sizes[`${row.image_width}x${row.image_height}`].zones[0];
+ assert.deepEqual([v2zone.x,v2zone.y,v2zone.width,v2zone.height],
+   [row.redaction_zones[0].x,row.redaction_zones[0].y,row.redaction_zones[0].width,row.redaction_zones[0].height]);
+ // The example does not map note, so nothing that could hold text is carried at all.
+ assert.equal('note' in row.redaction_zones[0],false);
+ console.log('PASS custom export schemas: validated as typed, previewed, saved, selectable, and coordinate-identical to the presets.');
  await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
  await page.setViewportSize({width:600,height:900});await noOverflow('600px');await page.setViewportSize({width:1500,height:1100});
 

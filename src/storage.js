@@ -1,11 +1,11 @@
 const DB_NAME = 'occlude-workspace-v1';
 export function openDatabase() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     // Templates outlive a workspace, so they get their own store and survive Clear workspace.
     request.onupgradeneeded = () => {
       const db = request.result;
-      for (const store of ['files', 'workspace', 'templates'])
+      for (const store of ['files', 'workspace', 'templates', 'schemas'])
         if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
     };
     request.onsuccess = () => resolve(request.result);
@@ -31,3 +31,6 @@ export const removeFile = (db, id) => transact(db, ['files'], 'readwrite', tx =>
 export const loadTemplates = db => transact(db, ['templates'], 'readonly', tx => tx.objectStore('templates').getAll());
 export const putTemplate = (db, template) => transact(db, ['templates'], 'readwrite', tx => tx.objectStore('templates').put(template, template.id));
 export const deleteTemplate = (db, id) => transact(db, ['templates'], 'readwrite', tx => tx.objectStore('templates').delete(id));
+export const loadSchemas = db => transact(db, ['schemas'], 'readonly', tx => tx.objectStore('schemas').getAll());
+export const putSchema = (db, schema) => transact(db, ['schemas'], 'readwrite', tx => tx.objectStore('schemas').put(schema, schema.id));
+export const deleteSchema = (db, id) => transact(db, ['schemas'], 'readwrite', tx => tx.objectStore('schemas').delete(id));

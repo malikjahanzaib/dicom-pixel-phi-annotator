@@ -4,6 +4,7 @@
 // shape of the key differs.
 import { exportZone, zoneKey, buildPipelineExport } from './coordinates.js';
 import { deviceAttributes, attributesSource, attributeKey, DEVICE_FIELDS } from './device.js';
+import { applySchema } from './schema.js';
 
 export const EXPORT_FORMATS = [
   { id: 'v2', label: 'Attributes (v2)', file: 'annotations.json',
@@ -33,7 +34,8 @@ export function resolveComboId(counts) {
 function addZones(group, source, zones) {
   const key = sizeKeyOf(source);
   let size = group.sizes.get(key);
-  if (!size) group.sizes.set(key, size = { ref_width: source.width, ref_height: source.height, zones: [], seen: new Set() });
+  if (!size) group.sizes.set(key, size = { ref_width: source.width, ref_height: source.height, zones: [], seen: new Set(), files: new Set() });
+  size.files.add(source.id ?? source);
   for (const value of zones) {
     const zone = exportZone(value, source);
     if (!zone || size.seen.has(zoneKey(zone))) continue;
@@ -42,46 +44,79 @@ function addZones(group, source, zones) {
   }
 }
 
-export function buildAttributeExport(images, layouts = []) {
+// One grouping pass that every format renders from, so a custom schema can never disagree
+// with v2 about what a combination contains — only about what the fields are called.
+export function exportRows(images, layouts = [], groupBy = 'attributes') {
   const groups = new Map();
   const groupFor = (key, attributes, source) => {
     let found = groups.get(key);
-    if (!found) groups.set(key, found = { attributes, source, combos: new Map(), sizes: new Map() });
+    if (!found) groups.set(key, found = { attributes, sources: new Set(), combos: new Map(), files: 0, sizes: new Map() });
+    found.sources.add(source);
     return found;
   };
+  const keyFor = (attributes, combo) => groupBy === 'combo' ? `combo ${combo}` : attributeKey(attributes);
   for (const image of images) {
     const zones = Object.values(image.frames).flat();
     if (!zones.length) continue;
     const attributes = deviceAttributes(image.metadata);
-    const found = groupFor(attributeKey(attributes), attributes, attributesSource(attributes));
     const combo = image.combo || '';
+    const found = groupFor(keyFor(attributes, combo), attributes, attributesSource(attributes));
+    found.variants = (found.variants || new Map()).set(attributeKey(attributes),
+      (found.variants?.get(attributeKey(attributes)) || 0) + 1);
+    found.attributeSet = (found.attributeSet || new Map()).set(attributeKey(attributes), attributes);
     found.combos.set(combo, (found.combos.get(combo) || 0) + 1);
+    found.files++;
     addZones(found, image, zones);
   }
   // A promoted import has no file and therefore no tags. It is marked as such rather than
   // being passed off as a partial read of a device that was never inspected.
   for (const layout of layouts) {
     if (!layout.promoted || !layout.zones.length) continue;
-    const found = groupFor(`imported ${layout.combo}`, deviceAttributes(null), 'imported');
+    const attributes = deviceAttributes(null);
+    const found = groupFor(`imported ${layout.combo}`, attributes, 'imported');
     found.combos.set(layout.combo || '', (found.combos.get(layout.combo || '') || 0) + 1);
+    found.files++;
     addZones(found, layout, layout.zones);
   }
-  const annotations = [...groups.values()].map(found => ({
-    combo_id: resolveComboId(found.combos),
-    manufacturer: found.attributes.manufacturer,
-    model: found.attributes.model,
-    sop_class: found.attributes.sopClass,
-    software_version: found.attributes.software,
-    attributes_source: found.source,
-    sizes: Object.fromEntries([...found.sizes.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, size]) => [key, { ref_width: size.ref_width, ref_height: size.ref_height, zones: size.zones }])),
-  }));
+  const rows = [...groups.values()].map(found => {
+    // Grouping by combo can gather more than one device under one label. The commonest
+    // set is reported and the source says plainly that it was not uniform.
+    let attributes = found.attributes;
+    if (found.variants && found.variants.size > 1) {
+      const [best] = [...found.variants.entries()].sort((a, b) => b[1] - a[1]);
+      attributes = found.attributeSet.get(best[0]);
+    }
+    const source = found.sources.size > 1 ? 'mixed'
+      : found.variants && found.variants.size > 1 ? 'mixed' : [...found.sources][0];
+    const sizes = [...found.sizes.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .map(([size, value]) => ({ size, ref_width: value.ref_width, ref_height: value.ref_height,
+        zones: value.zones, zone_count: value.zones.length, file_count: value.files.size }));
+    return {
+      combo_id: resolveComboId(found.combos),
+      manufacturer: attributes.manufacturer, model: attributes.model,
+      sop_class: attributes.sopClass, software_version: attributes.software,
+      attributes_source: source, file_count: found.files,
+      zone_count: sizes.reduce((n, size) => n + size.zone_count, 0), sizes,
+    };
+  });
   // Deterministic order, so two exports of the same workspace diff cleanly.
-  annotations.sort((a, b) =>
+  return rows.sort((a, b) =>
     (Number(a.combo_id || Infinity) - Number(b.combo_id || Infinity)) ||
     a.manufacturer.localeCompare(b.manufacturer) || a.model.localeCompare(b.model) ||
     a.sop_class.localeCompare(b.sop_class) || a.software_version.localeCompare(b.software_version));
+}
+
+export function buildAttributeExport(images, layouts = []) {
+  const annotations = exportRows(images, layouts).map(row => ({
+    combo_id: row.combo_id,
+    manufacturer: row.manufacturer,
+    model: row.model,
+    sop_class: row.sop_class,
+    software_version: row.software_version,
+    attributes_source: row.attributes_source,
+    sizes: Object.fromEntries(row.sizes.map(size =>
+      [size.size, { ref_width: size.ref_width, ref_height: size.ref_height, zones: size.zones }])),
+  }));
   return { schema_version: 2, generated_at: new Date().toISOString(), annotations };
 }
 
@@ -124,5 +159,21 @@ export function describeConflicts(conflicts) {
   }).join('\n\n');
 }
 
-export const buildExport = (format, images, layouts = []) =>
-  format === 'v1' ? buildPipelineExport(images, layouts) : buildAttributeExport(images, layouts);
+export const CUSTOM_PREFIX = 'custom:';
+export const customFormatId = schema => `${CUSTOM_PREFIX}${schema.id}`;
+export const findFormat = (id, schemas = []) =>
+  EXPORT_FORMATS.find(format => format.id === id) ||
+  schemas.filter(schema => customFormatId(schema) === id)
+    .map(schema => ({ id, label: `${schema.name} (custom)`, file: 'annotations-custom.json',
+      hint: 'A schema you defined. Field names and shape are yours; the coordinates are not changed.', schema }))[0] ||
+  EXPORT_FORMATS[0];
+
+export function buildExport(format, images, layouts = [], schemas = []) {
+  if (format === 'v1') return buildPipelineExport(images, layouts);
+  if (String(format).startsWith(CUSTOM_PREFIX)) {
+    const schema = schemas.find(entry => customFormatId(entry) === format);
+    if (!schema) throw new Error('That custom schema is no longer saved. Choose another format.');
+    return applySchema(schema, exportRows(images, layouts, schema.group_by));
+  }
+  return buildAttributeExport(images, layouts);
+}

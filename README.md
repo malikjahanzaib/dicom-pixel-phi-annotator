@@ -83,6 +83,8 @@ Two export formats are offered, chosen explicitly in the export panel. The selec
 
 Grouping is by the attributes, not the label. Where files sharing a combo ID disagree on their tags, **the tags win** — the same rule the tool already applies when a filename's dimensions disagree with the raster — and the disagreement is reported in the export panel and again before the file is written, naming the conflicting files. It is never silently merged.
 
+**Custom schemas** are a third option, defined in the app under **Custom schemas…** and listed in the same selector. A definition is data, never code — the content security policy forbids `eval`, and a schema that could compute would also be a schema that could alter a coordinate. It may rename keys, choose between a nested `sizes` object and one flat entry per combination and size, group by attributes or by combo, and add literal constants at the root, the entry and the zone. It reads only from a fixed set of sources, so a typo is refused with the reason rather than emitting `undefined`, and it is validated and previewed against the current workspace as you type. Omitting a field leaves it out, which is how a schema declines to carry notes at all. Definitions are stored in this browser and export and import as a small JSON.
+
 Because v2 is keyed by attributes, a file with no combo ID exports with an empty label rather than being blocked. **Combo (v1, legacy)** is keyed by combo ID, so it still requires one on every annotated file, and is byte-identical to the original schema with no version field:
 
 ```json
@@ -154,6 +156,8 @@ Annotation boxes draw a dark rule beneath a light one so an edge stays legible o
 - `src/coordinates.js`: native-pixel geometry, zone identity, nudge clamping, selection cycling, the previewed per-combo layout, and the unchanged pipeline export schema.
 - `src/reuse.js`: pure planning and application of box copies across frames and same-size files.
 - `src/dicom.js`: Cornerstone local-file decoding and source-raster rendering.
+- `src/export.js`: one grouping pass, the v2 and legacy renderers, and combo/attribute conflict detection.
+- `src/schema.js`: user-defined export schemas — validation and the declarative field mapping.
 - `src/layouts.js`: imported pipeline layouts — validation, additive merging, and the promotion gate.
 - `src/templates.js`: named zone layouts — construction, size matching, ordering, and file validation.
 - `src/contact.js`: pure contact-sheet scope, outlier flags, thumbnail scaling, and grid windowing.
