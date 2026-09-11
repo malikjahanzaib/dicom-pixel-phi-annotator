@@ -39,8 +39,8 @@ test('a template file round-trips and refuses anything malformed',()=>{
   assert.equal(file.format, 'pixel-zone-templates');
   assert.deepEqual(validateTemplateFile(file).map(t=>t.name), ['one']);
   assert.deepEqual(validateTemplateFile(file)[0].zones, [strip]);
-  assert.throws(()=>validateTemplateFile({ format: 'other', version: 1, templates: [] }), /Not a Pixel Zone template file/);
-  assert.throws(()=>validateTemplateFile({ format: 'pixel-zone-templates', version: 2, templates: [] }), /Not a Pixel Zone template file/);
+  assert.throws(()=>validateTemplateFile({ format: 'other', version: 1, templates: [] }), /Not an Occlude template file/);
+  assert.throws(()=>validateTemplateFile({ format: 'pixel-zone-templates', version: 2, templates: [] }), /Not an Occlude template file/);
   // A rectangle outside the template's own raster is rejected, not silently clipped.
   assert.throws(()=>validateTemplateFile({ ...file, templates: [{ ...saved[0], zones: [{ ...strip, width: 900 }] }] }), /lies outside 640×480/);
   assert.throws(()=>validateTemplateFile({ ...file, templates: [{ ...saved[0], zones: [] }] }), /has no zones/);

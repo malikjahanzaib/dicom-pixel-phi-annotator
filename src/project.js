@@ -1,6 +1,8 @@
 import { exportZone, imageRecord } from './coordinates.js';
 export function validateBackup(value) {
-  if(value?.format!=='pixel-zone-project'||value.version!==1||!Array.isArray(value.images))throw new Error('Not a supported Pixel Zone annotation backup.');
+  // The stored format identifier predates the rename and is deliberately unchanged:
+  // altering it would make every backup already on disk unreadable.
+  if(value?.format!=='pixel-zone-project'||value.version!==1||!Array.isArray(value.images))throw new Error('Not a supported Occlude annotation backup.');
   const ids=new Set();
   return value.images.map(input=>{
     if(!input||!/^([a-f0-9]{64})$/.test(input.id)||ids.has(input.id))throw new Error('Invalid or duplicate image identifier.');

@@ -1,4 +1,4 @@
-/* Pixel Zone — a monochrome instrument.
+/* Occlude — a monochrome instrument.
    The interface carries no hue: hierarchy is built from value, weight and tracking alone.
    Colour is reserved for meaning — annotation overlays on the canvas, a destructive action,
    a warning rule. Type is a system stack (no network is available to this app, by design),

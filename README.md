@@ -1,10 +1,10 @@
-# Pixel Zone
+# Occlude
 
 A local browser application for annotating burned-in text on DICOM and PNG images. It uses Cornerstone 5.8 for DICOM decoding and display, with a native-pixel rectangle editor.
 
 ## Run on this Mac
 
-Double-click **Start Pixel Zone.command**. It builds the app, starts a loopback-only server, and opens `http://127.0.0.1:5173`. Keep its Terminal window running while using the app. Stop it with Ctrl+C.
+Double-click **Start Occlude.command**. It builds the app, starts a loopback-only server, and opens `http://127.0.0.1:5173`. Keep its Terminal window running while using the app. Stop it with Ctrl+C.
 
 Or run:
 
@@ -113,6 +113,10 @@ The interface is monochrome by intent: hierarchy comes from value, weight and le
 No web font is loaded: the content security policy limits `font-src` to `'self'` and the application is offline by design, so the type is a system stack (SF Pro on macOS) with a monospace companion. A self-hosted face can be added under the same policy if a specific licensed typeface is wanted — drop the file in `src/` and Vite will bundle it.
 
 Annotation boxes draw a dark rule beneath a light one so an edge stays legible over any grey value, including the pure white of a burned-in caption strip. Unselected boxes are amber, selected boxes white with eight handles.
+
+## A note on stored identifiers
+
+The project was renamed from Pixel Zone to Occlude. Four identifiers deliberately kept their original names, because they are keys to data that already exists rather than labels: the IndexedDB database `pixel-zone-workspace-v1`, the backup format string `pixel-zone-project`, the template format string `pixel-zone-templates`, and the Web Lock `pixel-zone-workspace-writer`. Renaming any of them would not migrate anything — it would orphan every saved workspace, backup and template. Each is commented at its definition. Migrating later means accepting both names on read for a release before writing the new one.
 
 ## Code map
 

@@ -17,4 +17,4 @@ http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': types[path.extname(file)] || 'application/octet-stream', 'Cache-Control':'no-cache', 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer' });
     res.end(req.method === 'HEAD' ? undefined : body);
   } catch { res.writeHead(404); res.end('Not found'); }
-}).listen(port, '127.0.0.1', () => { console.log(`Pixel Zone: http://127.0.0.1:${port} (local device only)`); if(process.argv.includes('--open'))spawn(process.platform==='darwin'?'open':process.platform==='win32'?'explorer':'xdg-open',[`http://127.0.0.1:${port}`],{stdio:'ignore'}); });
+}).listen(port, '127.0.0.1', () => { console.log(`Occlude: http://127.0.0.1:${port} (local device only)`); if(process.argv.includes('--open'))spawn(process.platform==='darwin'?'open':process.platform==='win32'?'explorer':'xdg-open',[`http://127.0.0.1:${port}`],{stdio:'ignore'}); });

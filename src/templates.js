@@ -4,6 +4,7 @@
 // behave identically — a template is a source of zones, not a second way to write them.
 import { exportZone } from './coordinates.js';
 
+// Unchanged across the rename to Occlude: template files already saved must keep loading.
 export const TEMPLATE_FORMAT = 'pixel-zone-templates';
 export const MAX_NAME = 80;
 
@@ -56,7 +57,7 @@ function validateTemplate(input) {
 
 export function validateTemplateFile(value) {
   if (value?.format !== TEMPLATE_FORMAT || value.version !== 1 || !Array.isArray(value.templates))
-    throw new Error('Not a Pixel Zone template file.');
+    throw new Error('Not an Occlude template file.');
   const seen = new Set();
   return value.templates.map(input => {
     const template = validateTemplate(input);

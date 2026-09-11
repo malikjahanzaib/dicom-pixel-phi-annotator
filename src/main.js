@@ -915,7 +915,7 @@ $('applyTemplate').onclick=()=>{
 };
 $('exportTemplates').onclick=()=>{
   if(!templates.length){$('templatePlan').textContent='There are no templates to export.';return;}
-  downloadJSON(templateFile(sortTemplates(templates)),'pixel-zone-templates.json');
+  downloadJSON(templateFile(sortTemplates(templates)),'occlude-templates.json');
 };
 $('importTemplates').onchange=async e=>{
   const file=e.target.files[0];e.target.value='';if(!file)return;
@@ -990,7 +990,7 @@ $('importPipeline').onchange=async e=>{
   }catch(error){$('message').textContent=`Layout not imported: ${error.message}`;}
 };
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
-$('backup').onclick=()=>{downloadJSON({format:'pixel-zone-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'pixel-zone-annotations.json');};
+$('backup').onclick=()=>{downloadJSON({format:'pixel-zone-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'occlude-annotations.json');};
 $('restoreBackup').onchange=async e=>{
   const file=e.target.files[0];e.target.value='';if(!file)return;
   try{
@@ -1019,6 +1019,8 @@ async function initialize(){
     // Keep two tabs from silently overwriting the same saved workspace. The secondary tab
     // may view the last save and work in memory; it can export a backup of its own edits.
     if(navigator.locks)ownsWorkspace=await new Promise(resolve=>{
+      // Lock name unchanged across the rename, so a tab open from a previous build still
+      // contends for the same lock and two writers cannot appear mid-upgrade.
       navigator.locks.request('pixel-zone-workspace-writer',{ifAvailable:true},lock=>{
         resolve(!!lock);if(lock)return new Promise(()=>{});
       }).catch(()=>resolve(false));

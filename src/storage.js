@@ -1,3 +1,6 @@
+// Named before the project was renamed to Occlude, and deliberately left alone: the
+// database name is the key to every saved workspace, image and template already on disk.
+// Renaming it would not migrate that data, it would orphan it.
 const DB_NAME = 'pixel-zone-workspace-v1';
 export function openDatabase() {
   return new Promise((resolve, reject) => {
@@ -10,7 +13,7 @@ export function openDatabase() {
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error('Close other Pixel Zone tabs, then reload.'));
+    request.onblocked = () => reject(new Error('Close other Occlude tabs, then reload.'));
   });
 }
 export function transact(db, stores, mode, run) {
