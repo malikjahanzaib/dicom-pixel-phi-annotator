@@ -3,6 +3,7 @@ import { clamp, rectangleBetween, exportZone, parseFilename, buildPipelineExport
 import { openTagViewer } from './tag-viewer.js';
 import { sourceZones, reuseTargets, planReuse, applyPlan, describePlan } from './reuse.js';
 import { extractLines, suggestionBoxes, coverage, toZone } from './ocr.js';
+import { contactFiles, thumbFlags, scaleZones, gridWindow } from './contact.js';
 import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCounts, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment } from './library.js';
 import { inspectFile } from './import.js';
 import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile } from './storage.js';
@@ -265,6 +266,7 @@ document.addEventListener('keydown',e=>{
   if(e.key.toLowerCase()==='c'){e.preventDefault();copyPreviousFrame();}
   if(e.key.toLowerCase()==='r'){e.preventDefault();togglePreview();}
   if(e.key.toLowerCase()==='t'){e.preventDefault();detectText();}
+  if(e.key.toLowerCase()==='g'){e.preventDefault();openContact();}
   if(e.key==='+'||e.key==='='){e.preventDefault();zoom(1.25);}if(e.key==='-'){e.preventDefault();zoom(.8);}
 });
 document.addEventListener('keyup',e=>{if(e.code==='Space'){state.space=false;canvas.style.cursor=state.mode==='pan'?'grab':'crosshair';}});
@@ -493,7 +495,20 @@ function nativeRaster(im){
   return canvas;
 }
 const coveredBySomeZone=(box,zones)=>zones.some(z=>box.x>=z.x&&box.y>=z.y&&box.x+box.width<=z.x+z.width&&box.y+box.height<=z.y+z.height);
-function clearSuggestions(){state.suggestions=[];state.ocrKey=null;updateOcrPanel();}
+const ocrResults=new Map();            // "<image id>:<frame>" → suggestions, session only
+const ocrKeyFor=im=>im?`${im.id}:${im.frameIndex}`:null;
+// Restore any detection already made for this image and frame instead of discarding it,
+// so stepping through a combo does not re-run the engine on every return.
+function clearSuggestions(){
+  const im=current(),key=ocrKeyFor(im);
+  state.ocrKey=key;state.suggestions=key&&ocrResults.get(key)||[];
+  updateOcrPanel();
+}
+function rememberSuggestions(){if(state.ocrKey)ocrResults.set(state.ocrKey,state.suggestions);}
+const uncoveredFor=im=>{
+  const found=ocrResults.get(ocrKeyFor(im));
+  return found?coverage(found,Object.values(im.frames).flat()).uncovered:0;
+};
 async function detectText(){
   const im=current();
   if(!im||!state.bitmap||state.ocrBusy)return;
@@ -505,7 +520,7 @@ async function detectText(){
     const data=await recognize(nativeRaster(im));
     if(token!==state.loadToken||im.frameIndex!==frame)return;   // the operator moved on
     state.suggestions=suggestionBoxes(extractLines(data),im);
-    state.ocrKey=`${im.id}:${frame}`;
+    state.ocrKey=`${im.id}:${frame}`;rememberSuggestions();
     updateOcrPanel();render();
   }catch(error){
     state.suggestions=[];state.ocrKey=null;
@@ -515,11 +530,11 @@ async function detectText(){
 function acceptSuggestion(box){
   const im=current();if(!im)return;
   ensureHistory();im.zones.push(toZone(box));
-  state.suggestions=state.suggestions.filter(s=>s!==box);
+  state.suggestions=state.suggestions.filter(s=>s!==box);rememberSuggestions();
   state.selected=im.zones.length-1;
   changed();updateOcrPanel();updateZones();render();
 }
-function dismissSuggestion(box){state.suggestions=state.suggestions.filter(s=>s!==box);updateOcrPanel();render();}
+function dismissSuggestion(box){state.suggestions=state.suggestions.filter(s=>s!==box);rememberSuggestions();updateOcrPanel();render();}
 // Wording is load-bearing: it reports what was found and what is uncovered, and never
 // characterises the image. "No text detected" is not "no text present".
 const ocrStatusText=()=>{
@@ -551,11 +566,11 @@ $('acceptAllOcr').onclick=()=>{
   const im=current();if(!im||!state.suggestions.length)return;
   ensureHistory();
   for(const box of state.suggestions)im.zones.push(toZone(box));
-  state.suggestions=[];state.selected=-1;
+  state.suggestions=[];rememberSuggestions();state.selected=-1;
   changed();updateOcrPanel();updateZones();render();
   $('message').textContent='Accepted suggestions are ordinary zones now — check coverage, then use Copy to… to reuse them across the combo.';
 };
-$('dismissAllOcr').onclick=()=>{state.suggestions=[];updateOcrPanel();render();};
+$('dismissAllOcr').onclick=()=>{state.suggestions=[];rememberSuggestions();updateOcrPanel();render();};
 function updateToolHint(){
   $('toolHint').textContent=!state.bitmap?'Open an image to begin.':state.preview?previewHint():state.mode==='pan'?'Drag to pan.':state.mode==='window'?'Drag ↔ for contrast, ↕ for brightness.':state.hideZones?'Boxes hidden.':selected()?'Drag to move or resize · arrows nudge 1 px, Shift 10 px · Tab for next box':'Drag to draw · Shift-drag to overlap · arrows move between files';
 }
@@ -570,7 +585,7 @@ function updateImageControls(){
   $('windowWidth').value=gray?Math.round(im.display.windowWidth??decoded.windowWidth):'';$('windowCenter').value=gray?Math.round(im.display.windowCenter??decoded.windowCenter):'';
   $('invert').disabled=!decoded;$('resetDisplay').disabled=!decoded;$('invert').setAttribute('aria-pressed',String(!!im?.display.invert));
   $('openTags').disabled=im?.kind!=='DICOM'||!im?.file;
-  for(const id of ['drawMode','panMode','zoomIn','zoomOut','fit','actual','hideZones','preview','detectText'])$(id).disabled=!state.bitmap;
+  for(const id of ['drawMode','panMode','zoomIn','zoomOut','fit','actual','hideZones','preview','detectText','openContact'])$(id).disabled=!state.bitmap;
   if(state.ocrBusy)$('detectText').disabled=true;
   $('hideZones').disabled=!state.bitmap||state.preview; // the preview already stands in for it
   if(!gray&&state.mode==='window')setMode('draw');
@@ -674,6 +689,102 @@ function copyPreviousFrame(){
   commitReuse(plan,zones.length);
 }
 $('copyPreviousFrame').onclick=copyPreviousFrame;
+// Contact sheet. Thumbnails decode lazily, cache as small canvases, and the grid renders
+// a window of rows, so opening a thousand-file scope costs a screenful of decodes.
+const THUMB_W=142,THUMB_H=96,CELL_W=156,CELL_H=136,THUMB_CACHE_MAX=400;
+const thumbs=new Map();
+let contactEntries=[],contactPass=0,contactKey=null,thumbVersion=0;
+function thumbLayout(im){
+  const union=pipelineLayout(state.images,im.combo,im.width,im.height);
+  return union??Object.values(im.frames).flat().map(z=>exportZone(z,im)).filter(Boolean);
+}
+async function buildThumb(im){
+  if(!im.file)return null;
+  let source=null;
+  if(im.kind==='DICOM'){
+    const {decodeDicom,renderDicom}=await import('./dicom.js');
+    source=await renderDicom(await decodeDicom(im.file,im.frameIndex),im.display);
+  }else source=await createImageBitmap(im.file);
+  const scale=Math.min(THUMB_W/im.width,THUMB_H/im.height);
+  const canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(im.width*scale));canvas.height=Math.max(1,Math.round(im.height*scale));
+  canvas.getContext('2d').drawImage(source,0,0,canvas.width,canvas.height);
+  source.close?.();
+  if(thumbs.size>=THUMB_CACHE_MAX)thumbs.delete(thumbs.keys().next().value);
+  thumbs.set(im.id,canvas);
+  return canvas;
+}
+let thumbQueue=Promise.resolve();const thumbPending=new Set();
+function requestThumb(im,pass){
+  if(thumbs.has(im.id)||thumbPending.has(im.id)||!im.file)return;
+  thumbPending.add(im.id);
+  thumbQueue=thumbQueue.then(async()=>{
+    if(pass!==contactPass||!$('contactDialog').open)return;
+    try{if(await buildThumb(im)){thumbVersion++;renderContact();}}catch{}
+    finally{thumbPending.delete(im.id);}
+  });
+}
+function contactCell(entry){
+  const im=entry.image,flags=thumbFlags(im,uncoveredFor(im));
+  const cell=document.createElement('button');
+  cell.className='cell'+(flags.length?' flagged':'')+(entry.index===state.index?' active':'');
+  cell.title=im.path||im.name;
+  const shot=document.createElement('div');shot.className='shot';
+  const cached=thumbs.get(im.id);
+  if(cached){
+    // The overlay is the merged layout the pipeline will apply, drawn opaque exactly as
+    // Preview draws it, so a mismatch between image and layout is visible at a glance.
+    const view=document.createElement('canvas');view.width=cached.width;view.height=cached.height;
+    const ctx2=view.getContext('2d');ctx2.drawImage(cached,0,0);ctx2.fillStyle='#000';
+    for(const zone of scaleZones(thumbLayout(im),im,view.width,view.height))
+      ctx2.fillRect(zone.x,zone.y,zone.width,zone.height);
+    shot.append(view);
+  }else{
+    const pending=document.createElement('span');pending.className='pending';
+    pending.textContent=im.file?'…':'no source';shot.append(pending);
+    requestThumb(im,contactPass);
+  }
+  const name=document.createElement('span');name.className='name';name.textContent=im.name;
+  const marks=document.createElement('span');marks.className='flags';
+  for(const flag of flags){const tag=document.createElement('em');tag.textContent=flag;marks.append(tag);}
+  cell.append(shot,name,marks);
+  cell.onclick=()=>{$('contactDialog').close();showImage(entry.index);};
+  return cell;
+}
+function renderContact(){
+  const host=$('contactGrid');
+  const grid=gridWindow({count:contactEntries.length,width:host.clientWidth||CELL_W,
+    cellWidth:CELL_W,cellHeight:CELL_H,scrollTop:host.scrollTop,viewportHeight:host.clientHeight||CELL_H});
+  // Rebuild only when the window or a thumbnail actually changed. Without this, every
+  // scroll event and every decode replaced the whole grid, so a cell was never still
+  // long enough to click.
+  const key=`${grid.from}:${grid.to}:${grid.columns}:${contactEntries.length}:${thumbVersion}`;
+  if(contactKey===key)return;
+  contactKey=key;
+  const canvas=document.createElement('div');canvas.className='contact-canvas';canvas.style.height=`${grid.height}px`;
+  const pane=document.createElement('div');pane.className='contact-pane';
+  pane.style.transform=`translateY(${grid.offset}px)`;
+  for(let i=grid.from;i<grid.to;i++)pane.append(contactCell(contactEntries[i]));
+  canvas.append(pane);host.replaceChildren(canvas);
+}
+function openContact(){
+  const im=current();if(!im)return;
+  cancelDrag();contactPass++;
+  const scope=$('contactScope').value;
+  contactEntries=contactFiles(state.images,im,scope);
+  const flagged=contactEntries.filter(e=>thumbFlags(e.image,uncoveredFor(e.image)).length).length;
+  $('contactSubject').textContent=scope==='all'?'Whole library'
+    :`${im.combo?'Combo '+im.combo:'Unassigned'}${scope==='size'?` · ${im.width}×${im.height}`:''}`;
+  $('contactCount').textContent=`${contactEntries.length} file${contactEntries.length===1?'':'s'}`;
+  $('contactFlagged').textContent=flagged?`${flagged} flagged`:'';
+  if(!$('contactDialog').open)$('contactDialog').showModal();
+  $('contactGrid').scrollTop=0;contactKey=null;renderContact();
+}
+$('openContact').onclick=openContact;
+$('contactScope').onchange=openContact;
+$('closeContact').onclick=()=>$('contactDialog').close();
+$('contactGrid').addEventListener('scroll',renderContact,{passive:true});
+$('contactDialog').addEventListener('close',()=>{contactPass++;contactEntries=[];contactKey=null;$('contactGrid').replaceChildren();});
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 $('backup').onclick=()=>{downloadJSON({format:'pixel-zone-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'pixel-zone-annotations.json');};
 $('restoreBackup').onchange=async e=>{

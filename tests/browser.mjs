@@ -324,6 +324,40 @@ try{
  assert.equal(await page.locator('#ocrList').textContent(),'');
  assert.match(await page.locator('#ocrStatus').textContent(),/No text regions detected on this frame\. That is not a finding of "no text"\./);
  console.log(`PASS OCR offline: ${detected} line suggestions, padded and clamped, accepted only on request, no completeness claim.`);
+ // Contact sheet: a whole combo as thumbnails, each carrying the merged pipeline layout.
+ await open('combo16_640x480');
+ await page.locator('#openContact').click();
+ await page.waitForFunction(()=>document.getElementById('contactDialog').open);
+ assert.match(await page.locator('#contactSubject').textContent(),/Combo 16$/);
+ assert.match(await page.locator('#contactCount').textContent(),/^2 files$/);
+ // Thumbnails decode lazily, so wait for the raster rather than assuming it is there.
+ // Only one of this combo's two files still has its source after the restore step; the
+ // other must say so rather than sitting on a blank tile forever.
+ await page.waitForFunction(()=>document.querySelectorAll('#contactGrid .cell canvas').length>=1,{},{timeout:60000});
+ assert.match(await page.locator('#contactGrid .cell').filter({hasText:'combo16_1024x768'}).textContent(),/no source/);
+ // The overlay is the merged layout: the strip is blacked out on the thumbnail itself.
+ const painted=await page.locator('#contactGrid .cell canvas').first().evaluate(c=>{
+  const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;
+  const at=(x,y)=>d[((y*c.width+x)*4)];
+  return {strip:at(Math.floor(c.width*0.3),Math.floor(c.height*0.04)),lower:at(Math.floor(c.width*0.5),Math.floor(c.height*0.6))};});
+ assert.equal(painted.strip,0,`the merged layout must be painted opaque: ${JSON.stringify(painted)}`);
+ assert.ok(painted.lower>10,JSON.stringify(painted));
+ // Scope narrows to one raster size, and widens to everything.
+ await page.locator('#contactScope').selectOption('size');
+ assert.match(await page.locator('#contactCount').textContent(),/^1 file$/);
+ assert.match(await page.locator('#contactSubject').textContent(),/Combo 16 · 640×480/);
+ await page.locator('#contactScope').selectOption('all');
+ assert.match(await page.locator('#contactCount').textContent(),/^9 files$/);
+ // Outliers are flagged: no zones, no combo, or no reachable source.
+ assert.ok(await page.locator('#contactGrid .cell.flagged').count()>0);
+ assert.match(await page.locator('#contactFlagged').textContent(),/\d+ flagged/);
+ await page.screenshot({path:'.test-output/contact.png'});
+ // A thumbnail opens its file, which is the point of the review pass.
+ await page.locator('#contactGrid .cell').filter({hasText:'rgb.dcm'}).click();
+ await page.waitForFunction(()=>!document.getElementById('contactDialog').open);
+ await page.waitForFunction(()=>document.getElementById('viewTitle').textContent.includes('rgb.dcm'));
+ await open('combo16_640x480');
+ console.log('PASS contact sheet: merged layout overlaid on lazily decoded thumbnails, scoped, flagged, and clickable.');
  await page.setViewportSize({width:760,height:1000}); await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
  await page.setViewportSize({width:600,height:900});await noOverflow('600px');await page.setViewportSize({width:1500,height:1100});
 

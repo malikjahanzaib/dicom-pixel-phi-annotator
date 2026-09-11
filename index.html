@@ -77,6 +77,7 @@
         </div>
         <button id="preview" class="flagged" aria-pressed="false" disabled title="Redaction preview — fill every pipeline zone opaque (R)">Preview</button>
         <button id="detectText" disabled title="Detect burned-in text and suggest boxes (T)">Detect text</button>
+        <button id="openContact" disabled title="Review a whole combo as thumbnails (G)">Contact sheet</button>
       </div>
       <div class="zoom" role="group" aria-label="Zoom">
         <button id="zoomOut" aria-label="Zoom out">−</button>
@@ -159,6 +160,7 @@
             <dt>D · P</dt><dd>Draw · Pan</dd>
             <dt>R</dt><dd>Redaction preview</dd>
             <dt>T</dt><dd>Detect burned-in text</dd>
+            <dt>G</dt><dd>Contact sheet</dd>
             <dt>C</dt><dd>Copy previous frame’s boxes</dd>
             <dt>↑↓←→</dt><dd>Nudge box 1 px · Shift 10 px</dd>
             <dt>← →</dt><dd>Previous / next file when no box is selected</dd>
@@ -214,6 +216,23 @@
   </div>
 </dialog>
 
+<dialog id="contactDialog" class="sheet wide-sheet" aria-labelledby="contactTitle">
+  <div class="sheet-head">
+    <div><h2 id="contactTitle">Contact sheet</h2><p id="contactSubject" class="note"></p></div>
+    <button id="closeContact" class="x" aria-label="Close">×</button>
+  </div>
+  <div class="tag-controls">
+    <select id="contactScope" aria-label="Contact sheet scope">
+      <option value="combo">This combo, every size</option>
+      <option value="size">This combo and size</option>
+      <option value="all">Whole library</option>
+    </select>
+    <span id="contactCount" class="note"></span>
+  </div>
+  <div class="callout">Thumbnails carry the merged pipeline layout — what the export blacks out for that combo and size, including zones contributed by other frames and files. Flags mark a thumbnail worth a second look; an unflagged thumbnail has not been checked, only untripped.</div>
+  <div id="contactGrid" class="contact-grid"></div>
+  <div class="sheet-foot"><span>Click a thumbnail to open that file.</span><span id="contactFlagged"></span></div>
+</dialog>
 <dialog id="tagDialog" class="sheet wide-sheet" aria-labelledby="tagTitle">
   <div class="sheet-head">
     <div><h2 id="tagTitle">DICOM tags</h2><p id="tagFilename" class="note"></p></div>

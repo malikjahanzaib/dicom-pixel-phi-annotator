@@ -369,6 +369,25 @@ legend { padding: 0 0 6px; }
 .callout.flag { border-left: 2px solid var(--flag); }
 .callout.warn { border-left: 2px solid var(--flag); color: #e6c98a; }
 
+/* ---- contact sheet ---------------------------------------------------- */
+
+.contact-grid { flex: 1; min-height: 0; overflow: auto; position: relative; border-top: 1px solid var(--line); background: var(--shell); }
+.contact-canvas { position: relative; width: 100%; }
+.contact-pane { position: absolute; top: 0; left: 0; right: 0; display: flex; flex-wrap: wrap; align-content: flex-start; }
+.cell { flex: 0 0 156px; width: 156px; height: 136px; padding: 6px; border: 0; border-radius: 0; background: none; display: flex; flex-direction: column; gap: 4px; }
+.cell:hover { background: #1c1c20; }
+.cell:hover .shot { border-color: var(--ink-2); }
+.cell > * { pointer-events: none; }
+.cell .shot { flex: 1; min-height: 0; display: grid; place-items: center; background: var(--black); border: 1px solid var(--line-strong); overflow: hidden; }
+.cell.flagged .shot { border-color: var(--flag); }
+.cell canvas { display: block; max-width: 100%; max-height: 100%; }
+.cell .pending { font: 400 9.5px/1 var(--mono); color: var(--muted); }
+.cell .name { font: 400 9.5px/1.2 var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.cell.active .name { color: var(--ink); }
+.cell .flags { display: flex; gap: 3px; overflow: hidden; }
+.cell .flags em { font: 500 8px/1 var(--mono); font-style: normal; letter-spacing: .05em; text-transform: uppercase; color: var(--flag); border: 1px solid var(--flag); border-radius: 2px; padding: 2px 3px; white-space: nowrap; }
+#contactFlagged { font-variant-numeric: tabular-nums; color: var(--flag); }
+
 /* ---- tag table -------------------------------------------------------- */
 
 .tag-controls { flex-shrink: 0; display: flex; gap: 8px; padding: 12px 16px 8px; }
