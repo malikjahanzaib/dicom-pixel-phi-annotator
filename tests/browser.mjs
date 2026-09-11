@@ -358,6 +358,17 @@ try{
   return {strip:at(Math.floor(c.width*0.3),Math.floor(c.height*0.04)),lower:at(Math.floor(c.width*0.5),Math.floor(c.height*0.6))};});
  assert.equal(painted.strip,0,`the merged layout must be painted opaque: ${JSON.stringify(painted)}`);
  assert.ok(painted.lower>10,JSON.stringify(painted));
+ // A thumbnail has to render INSIDE its own tile. Sampling getImageData reads the backing
+ // store and passes however the element is laid out, so it cannot catch a thumbnail that
+ // has escaped its cell — which is exactly what a global `canvas` selector once caused.
+ const fit=await page.locator('#contactGrid .cell').first().evaluate(cell=>{
+  const c=cell.getBoundingClientRect(),v=cell.querySelector('canvas').getBoundingClientRect();
+  const shot=cell.querySelector('.shot').getBoundingClientRect();
+  return {escaped:v.left<c.left-1||v.right>c.right+1||v.top<c.top-1||v.bottom>c.bottom+1,
+   canvas:[Math.round(v.width),Math.round(v.height)],cell:[Math.round(c.width),Math.round(c.height)],
+   shotWidth:Math.round(shot.width)};});
+ assert.equal(fit.escaped,false,`thumbnail escaped its tile: ${JSON.stringify(fit)}`);
+ assert.ok(fit.shotWidth>100,`the thumbnail frame collapsed: ${JSON.stringify(fit)}`);
  // Scope narrows to one raster size, and widens to everything.
  await page.locator('#contactScope').selectOption('size');
  assert.match(await page.locator('#contactCount').textContent(),/^1 file$/);
