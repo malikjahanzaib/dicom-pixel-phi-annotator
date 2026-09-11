@@ -1,0 +1,65 @@
+name: tests
+
+# The browser suite takes a few minutes, so it runs beside the unit suite rather than
+# after it: a logic error reports in under a minute without waiting on Chrome.
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  browser:
+    name: Browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+
+      # The suite launches Google Chrome by channel, not Playwright's bundled Chromium,
+      # so the channel build has to be installed explicitly.
+      - name: Install Google Chrome
+        run: npx playwright install --with-deps chrome
+
+      # Liberation Sans and Liberation Mono are metric-compatible with Arial and Courier
+      # New. The layout-overflow checks measure rendered button widths and the OCR fixture
+      # draws monospaced text, so both depend on the runner having sane font metrics.
+      - name: Install metric-compatible fonts
+        run: sudo apt-get install -y --no-install-recommends fonts-liberation
+
+      # Serves dist/, so the build must precede it — and the build is also what stages the
+      # OCR engine and language data the browser suite exercises offline.
+      - run: npm run build
+      - run: npm run test:browser
+
+      # Screenshots only, and only on failure. Every fixture the suite uses is generated
+      # at run time from synthetic values, so nothing uploaded here can contain PHI —
+      # keep it that way if the suite is ever pointed at real files.
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-screenshots
+          path: .test-output/*.png
+          retention-days: 7
+          if-no-files-found: ignore

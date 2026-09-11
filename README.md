@@ -102,7 +102,9 @@ npm run build
 npm run test:browser # local Chrome integration tests, isolated origin port 5174
 ```
 
-The browser test requires Google Chrome (`channel: chrome`) and writes synthetic fixtures/screenshots to ignored `.test-output/`. Development: `npm run dev`. Production mode (`npm start`) is the tested offline runtime and uses the same stable port as development for persistence.
+The browser test requires Google Chrome (`channel: chrome`) and writes synthetic fixtures/screenshots to ignored `.test-output/`.
+
+Both suites run in GitHub Actions on push and on pull requests (`.github/workflows/tests.yml`), as two parallel jobs so a logic error reports without waiting on Chrome. The browser job installs the Chrome channel build explicitly and installs `fonts-liberation`, because the layout-overflow checks measure rendered button widths and the OCR fixture draws monospaced text — both depend on the runner having Arial- and Courier-metric-compatible fonts. Failure screenshots upload as an artifact; every fixture is generated at run time from synthetic values, so nothing uploaded can contain PHI, and that must stay true if the suite is ever pointed at real files. Development: `npm run dev`. Production mode (`npm start`) is the tested offline runtime and uses the same stable port as development for persistence.
 
 ## Interface
 
