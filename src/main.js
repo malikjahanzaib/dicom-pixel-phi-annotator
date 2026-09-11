@@ -21,18 +21,18 @@ function toNative(clientX,clientY,bounded=true) {
   return bounded && im ? {x:clamp(p.x,0,im.width), y:clamp(p.y,0,im.height)} : p;
 }
 function buildExport() { return buildPipelineExport(state.images); }
-function changed() { flushNudge(); state.dirty=true; rememberHistory(); persist(); $('exportStatus').textContent='Changes ready to export.'; updateLibrary(); }
+function changed() { flushNudge(); state.dirty=true; rememberHistory(); persist(); $('exportStatus').textContent='Unexported changes.'; updateLibrary(); }
 function updateSummary() {
   const groups=new Map(); let count=0,unassigned=0;
   for(const im of state.images){const n=boxCount(im);if(!n)continue;count+=n;if(!im.combo)unassigned+=n;
     const key=`${im.combo ? 'Combo '+im.combo : 'Unassigned'} · ${im.width}×${im.height}`;groups.set(key,(groups.get(key)||0)+n);}
   $('summary').replaceChildren();
-  for(const [label,n] of groups){const row=document.createElement('div');row.className='summary-row';const span=document.createElement('span');span.textContent=label;const value=document.createElement('b');value.textContent=`${n} zones`;row.append(span,value);$('summary').append(row);}
-  if(!count)$('summary').textContent='No annotated sizes yet.';
-  $('total').textContent=`· ${count} zones`; $('export').disabled=!count||unassigned>0;
+  for(const [label,n] of groups){const row=document.createElement('div');row.className='summary-row';const span=document.createElement('span');span.textContent=label;const value=document.createElement('b');value.textContent=`${n} zone${n===1?'':'s'}`;row.append(span,value);$('summary').append(row);}
+  if(!count)$('summary').textContent='No zones';
+  $('total').textContent=`${count} zone${count===1?'':'s'}`; $('export').disabled=!count||unassigned>0;
   $('export').title=unassigned?'Assign combo IDs to all annotated files first.':'';
-  if(unassigned)$('exportStatus').textContent=`${unassigned} zones need a combo ID. Filter the library by “Needs combo ID” to find them.`;
-  else if($('exportStatus').textContent.includes('need a combo ID'))$('exportStatus').textContent='Ready to export layout zones.';
+  if(unassigned)$('exportStatus').textContent=`${unassigned} zones without a combo ID · filter: Needs combo ID`;
+  else if($('exportStatus').textContent.includes('without a combo ID'))$('exportStatus').textContent='Ready to export.';
   updateHistoryButtons();refreshPreview();updateToolHint();
 }
 function updateEditor() {
@@ -44,9 +44,9 @@ function updateEditor() {
   if (document.activeElement!==$('note')) $('note').value=z.note;
 }
 function updateZones() {
-  const zs=current()?.zones || []; $('zoneCount').textContent=`(${zs.length})`;
+  const zs=current()?.zones || []; $('zoneCount').textContent=String(zs.length);
   $('zones').replaceChildren();
-  if (!zs.length) {const empty=document.createElement('div');empty.className='zone-empty';empty.innerHTML='<svg class="icon" aria-hidden="true"><use href="#i-box"/></svg><strong>No boxes on this frame</strong><p>Choose Draw box, then drag around the text you want to redact.</p>';$('zones').append(empty);}
+  if (!zs.length) {const empty=document.createElement('div');empty.className='zone-empty';empty.textContent='No boxes on this frame';$('zones').append(empty);}
   zs.forEach((z,i)=>{
     const row=document.createElement('div');row.className='zone'+(i===state.selected?' selected':'');
     const choose=document.createElement('button');choose.className='choose';choose.setAttribute('aria-pressed',String(i===state.selected));
@@ -79,9 +79,16 @@ function render() {
   // Redaction preview replaces the editing overlay with what a redaction actually leaves
   // behind, so nothing translucent can be mistaken for covered pixels.
   if(state.preview){ctx.fillStyle='#000';for(const z of state.previewLayout?.zones||[])ctx.fillRect(z.x,z.y,z.width,z.height);}
-  else if(!state.hideZones)im.zones.forEach((z,i)=>{ctx.fillStyle=i===state.selected?'rgba(124,173,255,.22)':'rgba(255,75,104,.25)';ctx.strokeStyle=i===state.selected?'#91baff':'#ff728b';ctx.lineWidth=2/v.scale;ctx.fillRect(z.x,z.y,z.width,z.height);ctx.strokeRect(z.x,z.y,z.width,z.height);});
+  else if(!state.hideZones)im.zones.forEach((z,i)=>{
+    const on=i===state.selected;
+    ctx.fillStyle=on?'rgba(255,255,255,.13)':'rgba(214,171,63,.11)';ctx.fillRect(z.x,z.y,z.width,z.height);
+    ctx.lineWidth=4/v.scale;ctx.strokeStyle='rgba(0,0,0,.78)';ctx.strokeRect(z.x,z.y,z.width,z.height);
+    ctx.lineWidth=1.5/v.scale;ctx.strokeStyle=on?'#fff':'#d6ab3f';ctx.strokeRect(z.x,z.y,z.width,z.height);
+  });
   ctx.restore();
-  const z=selected();if(z&&!state.hideZones&&!state.preview){ctx.fillStyle='#132541';ctx.strokeStyle='#bed7ff';ctx.lineWidth=1.5;for(const [,x,y] of handles(z)){ctx.fillRect(v.x+x*v.scale-4,v.y+y*v.scale-4,8,8);ctx.strokeRect(v.x+x*v.scale-4,v.y+y*v.scale-4,8,8);}}
+  const z=selected();if(z&&!state.hideZones&&!state.preview){
+    ctx.fillStyle='#fff';ctx.strokeStyle='rgba(0,0,0,.75)';ctx.lineWidth=1;
+    for(const [,x,y] of handles(z)){const px=Math.round(v.x+x*v.scale)-3.5,py=Math.round(v.y+y*v.scale)-3.5;ctx.fillRect(px,py,7,7);ctx.strokeRect(px,py,7,7);}}
   $('zoomValue').textContent=`${Math.round(v.scale*100)}%`;
 }
 function fit() {const im=current();if(!state.bitmap||!im)return;const scale=Math.max(.01,Math.min((cssWidth-36)/im.width,(cssHeight-36)/im.height));state.view={scale,x:(cssWidth-im.width*scale)/2,y:(cssHeight-im.height*scale)/2};render();}
@@ -97,7 +104,7 @@ async function showImage(index, frame, preserveView=false) {
   const im=current();if(frame!==undefined)im.frameIndex=clamp(frame,0,im.frameCount-1);
   ensureHistory();$('filename').textContent=im.name;$('metadata').textContent=`${im.kind} · Loading…`;
   $('warning').hidden=true;$('cursorReadout').textContent='—';$('empty').hidden=true;
-  $('loading').hidden=false;$('loading').textContent=`Opening ${im.kind}${im.frameCount>1?' frame '+(im.frameIndex+1):''}…`;
+  $('loading').hidden=false;$('loading').textContent=`Decoding ${im.kind}${im.frameCount>1?' · frame '+(im.frameIndex+1):''}…`;
   updateLibrary();updateZones();updateImageControls();render();
   try {
     if(!im.file)throw new Error('Source file is missing. Reopen the same file to reconnect its saved annotations.');
@@ -129,7 +136,7 @@ async function addFiles(files) {
       try {
         const im=await inspectFile(file),existing=state.images.find(x=>x.id===im.id);
         if(existing){if(!existing.file){existing.file=file;reconnected++;}else duplicates++;}else{state.images.push(im);added++;}
-        if(db){try{await saveFile(db,im.id,file);}catch{storageFailed('Could not save this image locally. It is available for this session.');}}
+        if(db){try{await saveFile(db,im.id,file);}catch{storageFailed('Image not saved locally · available this session');}}
       }catch(error){failures.push(`${file.name}: ${error.message}`);}
     }
     $('message').textContent=`${added} added${reconnected?' · '+reconnected+' reconnected':''}${duplicates?' · '+duplicates+' duplicates skipped':''}${failures.length?'\n'+failures.join('\n'):''}`;
@@ -246,24 +253,24 @@ $('export').onclick=()=>{
   if(state.drag)finishDrag();const payload=buildExport();
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\n'],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download='annotations.json';document.body.append(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),60000);$('exportStatus').textContent='Pipeline JSON downloaded.';}catch(error){$('exportStatus').textContent=error.message;}
+  setTimeout(()=>URL.revokeObjectURL(url),60000);$('exportStatus').textContent='Exported.';}catch(error){$('exportStatus').textContent=error.message;}
 };
 window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.returnValue='';}});
 
 // Persistent workspace: only metadata is rewritten after an edit; original files are stored once.
 let ownsWorkspace=true;
 let db=null, saving=Promise.resolve(), revision=0, saveTimer, ready=false, persistenceFailed=false;
-function storageFailed(message){persistenceFailed=true;$('saveStatus').textContent=message || 'Local saving unavailable · use annotation backup';state.dirty=true;}
+function storageFailed(message){persistenceFailed=true;$('saveStatus').textContent=message || 'Session only · save a backup';state.dirty=true;}
 function persist(){
   if(!ready)return;
   state.dirty=true;const rev=++revision;clearTimeout(saveTimer);
-  if(!db){storageFailed(ownsWorkspace?'Session only · local saving unavailable':'Another tab owns saving · session only');return;}
-  $('saveStatus').textContent='Saving locally…';
+  if(!db){storageFailed(ownsWorkspace?'Session only · storage unavailable':'Session only · another tab owns the workspace');return;}
+  $('saveStatus').textContent='Saving…';
   saveTimer=setTimeout(()=>{
     const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id});
     saving=saving.then(()=>saveSession(db,snapshot)).then(()=>{
-      if(rev===revision&&!persistenceFailed){state.dirty=false;$('saveStatus').textContent='Saved on this device';}
-    }).catch(()=>storageFailed('Local save failed · download an annotation backup'));
+      if(rev===revision&&!persistenceFailed){state.dirty=false;$('saveStatus').textContent='Saved locally';}
+    }).catch(()=>storageFailed('Save failed · download a backup'));
   },180);
 }
 // History is per file and per frame. Box reuse writes frames other than the open one,
@@ -287,7 +294,7 @@ function nudge(dx,dy){
   ensureHistory();z.x=moved.x;z.y=moved.y;
   nudgePending={image:im,frame:im.frameIndex};
   clearTimeout(nudgeTimer);nudgeTimer=setTimeout(flushNudge,350);
-  state.dirty=true;persist();$('exportStatus').textContent='Changes ready to export.';
+  state.dirty=true;persist();$('exportStatus').textContent='Unexported changes.';
   // Patch the one row that changed rather than rebuilding the list on every keypress.
   updateEditor();const row=$('zones').children[state.selected];if(row)row.querySelector('small').textContent=coordText(z);
   refreshPreview();render();
@@ -319,13 +326,15 @@ function updateLibrary(){
     const button=document.createElement('button');button.className='library-item'+(index===state.index?' active':'');button.setAttribute('aria-current',String(index===state.index));
     const badge=document.createElement('span');badge.className='file-type';badge.textContent=im.kind==='DICOM'?'DCM':'PNG';badge.setAttribute('aria-hidden','true');
     const info=document.createElement('span');info.className='file-info';const title=document.createElement('strong');title.textContent=im.name;
-    const detail=document.createElement('small');const n=boxCount(im);detail.textContent=`${im.width} × ${im.height} · ${im.frameCount} frame${im.frameCount===1?'':'s'} · ${n} box${n===1?'':'es'}${im.combo?' · combo '+im.combo:''}${im.file?'':' · source needed'}`;
+    const detail=document.createElement('small');const n=boxCount(im);
+    // Single-frame files are the common case; naming their one frame only costs a line wrap.
+    detail.textContent=`${im.width}×${im.height}${im.frameCount>1?` · ${im.frameCount} frames`:''} · ${n} box${n===1?'':'es'}${im.combo?' · combo '+im.combo:''}${im.file?'':' · source needed'}`;
     info.append(title,detail);button.append(badge,info);button.onclick=()=>showImage(index);$('library').append(button);
   }
-  if(!shown.length){const empty=document.createElement('div');empty.className='library-empty';empty.innerHTML='<svg class="icon" aria-hidden="true"><use href="#i-files"/></svg><strong></strong><span></span>';
-    const [heading,detail]=!total?['Your images, organized','Open files or a folder to get started.']
-      :query?['No matching files','Try another file name, path, or combo ID.']
-      :['Nothing left in this view','Every file has moved out of this filter.'];
+  if(!shown.length){const empty=document.createElement('div');empty.className='library-empty';empty.innerHTML='<strong></strong><span></span>';
+    const [heading,detail]=!total?['No files','Open files or a folder.']
+      :query?['No matches','Try another name, path, or combo ID.']
+      :['Nothing in this view','Every file has left this filter.'];
     empty.querySelector('strong').textContent=heading;empty.querySelector('span').textContent=detail;$('library').append(empty);}
   const combo=current()?.combo||'';
   $('applyComboToShown').hidden=total<2;$('applyComboToShown').disabled=!shown.length||!combo;
@@ -368,13 +377,13 @@ function togglePreview(){
 }
 $('preview').onclick=togglePreview;
 function updateToolHint(){
-  $('toolHint').textContent=!state.bitmap?'Open an image to start annotating.':state.preview?previewHint():state.mode==='pan'?'Drag the image to pan.':state.mode==='window'?'Drag left / right for contrast, up / down for brightness.':state.hideZones?'Boxes are hidden. Show boxes to edit them.':selected()?'Drag to move or resize · arrow keys nudge 1 px, Shift 10 px · Tab for the next box.':'Drag around text to create a box. Shift-drag to overlap. Arrow keys move between files.';
+  $('toolHint').textContent=!state.bitmap?'Open an image to begin.':state.preview?previewHint():state.mode==='pan'?'Drag to pan.':state.mode==='window'?'Drag ↔ for contrast, ↕ for brightness.':state.hideZones?'Boxes hidden.':selected()?'Drag to move or resize · arrows nudge 1 px, Shift 10 px · Tab for next box':'Drag to draw · Shift-drag to overlap · arrows move between files';
 }
 function updateImageControls(){
   const im=current(),decoded=state.decoded,gray=!!decoded&&!decoded.color;
-  $('viewTitle').textContent=im?.name||'No image selected';$('viewSubtitle').textContent=im?`${im.kind} · ${im.width} × ${im.height} pixels · ${im.combo?'Combo '+im.combo:'Combo unassigned'}`:'Open files to begin';
+  $('viewTitle').textContent=im?.name||'No file';$('viewSubtitle').textContent=im?`${im.kind} · ${im.width}×${im.height} · ${im.combo?'combo '+im.combo:'no combo'}`:'';
   $('comboId').disabled=!im;$('comboId').value=im?.combo||'';$('removeImage').disabled=!im;
-  $('frameLabel').textContent=im?`Frame ${im.frameIndex+1} / ${im.frameCount}`:'Frame —';
+  $('frameLabel').textContent=im?`${im.frameIndex+1} / ${im.frameCount}`:'—';
   $('frameSlider').max=im?im.frameCount-1:0;$('frameSlider').value=im?.frameIndex||0;$('frameSlider').disabled=!im||im.frameCount===1;
   $('framePrevious').disabled=!im||im.frameIndex===0;$('frameNext').disabled=!im||im.frameIndex===im.frameCount-1;
   for(const id of ['windowWidth','windowCenter','windowMode'])$(id).disabled=!gray;
@@ -422,7 +431,7 @@ $('resetDisplay').onclick=()=>{current().display={};refreshDicom();persist();};
 $('framePrevious').onclick=()=>showImage(state.index,current().frameIndex-1,true);
 $('frameNext').onclick=()=>showImage(state.index,current().frameIndex+1,true);
 $('frameSlider').onchange=()=>showImage(state.index,Number($('frameSlider').value),true);
-$('hideZones').onclick=()=>{state.hideZones=!state.hideZones;$('hideZones').setAttribute('aria-pressed',String(state.hideZones));$('hideZones').textContent=state.hideZones?'Show boxes':'Hide boxes';updateToolHint();render();};
+$('hideZones').onclick=()=>{state.hideZones=!state.hideZones;$('hideZones').setAttribute('aria-pressed',String(state.hideZones));$('hideZones').textContent=state.hideZones?'Show':'Hide';updateToolHint();render();};
 // Copying boxes between frames and between same-size files. Planning is pure, so the
 // dialog can price the operation before anything is written; each destination frame
 // receives its own history entry and stays independently undoable.
@@ -502,7 +511,7 @@ $('removeImage').onclick=async()=>{
   if(db)try{await removeFile(db,im.id);}catch{storageFailed();}persist();
 };
 $('clearWorkspace').onclick=async()=>{
-  if(importing)return;if(!confirm('Delete all imported images and annotations from this browser’s workspace? Original source files are unchanged.'))return;
+  if(importing)return;if(!confirm('Delete every imported image and annotation from this browser? Source files are untouched.'))return;
   cancelDrag();clearTimeout(saveTimer);revision++;await saving;
   try{if(db)await clearSession(db);}catch{storageFailed('Could not clear browser storage.');return;}
   state.images=[];resetView();persistenceFailed=false;persist();$('message').textContent='Workspace cleared.';
@@ -521,9 +530,9 @@ async function initialize(){
     const saved=await loadSession(db);
     if(saved?.version===1){for(const record of saved.images)state.images.push(hydrate(record,await loadFile(db,record.id)));state.index=-1;}
     if(!ownsWorkspace){db.close();db=null;persistenceFailed=true;}
-    ready=true;$('saveStatus').textContent=ownsWorkspace?'Saved on this device':'Another tab owns saving · session only';
+    ready=true;$('saveStatus').textContent=ownsWorkspace?'Saved locally':'Session only · another tab owns the workspace';
     if(state.images.length)await showImage(Math.max(0,state.images.findIndex(im=>im.id===saved.activeId)));
-  }catch{db=null;ready=true;storageFailed('Session only · local storage unavailable');}
+  }catch{db=null;ready=true;storageFailed('Session only · storage unavailable');}
   for(const id of ['files','folder','restoreBackup'])$(id).disabled=false;
   updateLibrary();updateImageControls();updateZones();
 }

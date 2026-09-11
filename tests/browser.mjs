@@ -32,6 +32,7 @@ try{
  await page.locator('#fit').click();const samples=await page.locator('#canvas').evaluate(c=>{const r=c.getBoundingClientRect(),s=Math.min((r.width-36)/640,(r.height-36)/480),dpr=c.width/r.width,ox=(r.width-640*s)/2,oy=(r.height-480*s)/2;return [100,500].map(x=>c.getContext('2d').getImageData(Math.floor((ox+x*s)*dpr),Math.floor((oy+20*s)*dpr),1,1).data[0]);});assert.ok(samples[0]>200&&samples[1]<100,JSON.stringify(samples));
  await draw(0,0,420,40);assert.match(await page.locator('#boxReadout').textContent(),/x=0, y=0, w=420, h=40/);
  await page.locator('#note').fill('patient strip');await page.locator('#note').press('Tab');
+ await page.screenshot({path:'.test-output/main.png'});
  // The metadata dialog searches the full file, including sequences and private tags.
  await page.locator('#openTags').click();await page.waitForFunction(()=>document.getElementById('tagCount').textContent.includes(' of '));
  assert.ok(await page.locator('#tagNext').isEnabled());await page.locator('#tagNext').click();assert.match(await page.locator('#tagPage').textContent(),/2 \/ 2/);
@@ -163,7 +164,7 @@ try{
  await open('combo16_1024x768');await draw(0,0,670,64,1024,768);
  const payload=await exportJson('#export');assert.deepEqual(Object.keys(payload),['generated_at','annotations']);assert.equal(payload.annotations['16']['640x480'].zones.length,2);assert.equal(payload.annotations['16']['640x480'].zones[1].note,'DOB');assert.equal(payload.annotations['16']['1024x768'].zones[0].width,670);
  console.log('PASS DICOM import, frame-specific boxes, native geometry with anisotropic pixel spacing, zoom, undo/redo, window/level, pipeline JSON.');
- await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved on this device');await page.reload();await waitImage();assert.equal(await page.locator('#library button').count(),6);await open('combo16_640x480');assert.match(await page.locator('#zones').textContent(),/patient strip/);await page.locator('#frameNext').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/DOB/);console.log('PASS IndexedDB restores images, frame annotations, notes, and display settings after reload.');
+ await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved locally');await page.reload();await waitImage();assert.equal(await page.locator('#library button').count(),6);await open('combo16_640x480');assert.match(await page.locator('#zones').textContent(),/patient strip/);await page.locator('#frameNext').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/DOB/);console.log('PASS IndexedDB restores images, frame annotations, notes, and display settings after reload.');
  for(const name of ['rle.dcm','signed16.dcm','mono1.dcm','rgb.dcm']){await open(name);assert.equal(await page.locator('#warning').isVisible(),false,name);const variation=await page.locator('#canvas').evaluate(c=>{const data=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let lo=255,hi=0;for(let i=0;i<data.length;i+=4){lo=Math.min(lo,data[i]);hi=Math.max(hi,data[i]);}return hi-lo;});assert.ok(variation>100,name);}
  console.log('PASS RLE, signed 16-bit, MONOCHROME1, and RGB DICOM decoding.');
  // Exercise a WASM compressed codec using a JPEG created locally from a synthetic canvas.
@@ -171,9 +172,9 @@ try{
  const compressed=path.join(fixtureDir,'jpeg.dcm');await fs.writeFile(compressed,dicom({syntax:'1.2.840.10008.1.2.4.50',photo:'YBR_FULL_422',compressed:Buffer.from(jpeg,'base64')}));await page.locator('#files').setInputFiles(compressed);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 added'));await open('jpeg.dcm');assert.equal(await page.locator('#warning').isVisible(),false);console.log('PASS JPEG baseline DICOM with locally bundled WASM codec.');
  await draw(0,0,420,40);assert.equal(await page.locator('#export').isDisabled(),true);await page.locator('#comboId').fill('022');await page.locator('#comboId').press('Tab');assert.equal(await page.locator('#export').isDisabled(),false);
  const backup=await exportJson('#backup');assert.equal(backup.format,'pixel-zone-project');assert.ok(backup.images.some(i=>i.frames[1]?.[0]?.note==='DOB'));
- await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved on this device');
+ await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved locally');
  await page.screenshot({path:'.test-output/workspace.png',fullPage:true});
- const secondary=await context.newPage();await secondary.goto(origin);await secondary.waitForFunction(()=>document.getElementById('saveStatus').textContent.includes('Another tab'));await secondary.close();console.log('PASS secondary-tab protection against autosave overwrites.');
+ const secondary=await context.newPage();await secondary.goto(origin);await secondary.waitForFunction(()=>document.getElementById('saveStatus').textContent.toLowerCase().includes('another tab'));await secondary.close();console.log('PASS secondary-tab protection against autosave overwrites.');
  const backupPath=path.resolve('.test-output/backup.json');await fs.writeFile(backupPath,JSON.stringify(backup));
  await page.locator('#workspaceMenu').evaluate(e=>e.open=true);await page.locator('#clearWorkspace').click();await page.waitForFunction(()=>document.querySelectorAll('#library button').length===0);
  await page.locator('#restoreBackup').setInputFiles(backupPath);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Backup restored'));
@@ -208,7 +209,7 @@ try{
  assert.match(await options(),/No boxes \(0\)/);
  assert.equal(await page.locator('#export').isDisabled(),true);
  await page.locator('#libraryFilter').selectOption('unannotated');
- assert.match(await page.locator('.library-empty').textContent(),/Nothing left in this view/);
+ assert.match(await page.locator('.library-empty').textContent(),/Nothing in this view/);
  await page.locator('#libraryFilter').selectOption('needs-combo');
  assert.equal(await page.locator('#library button').count(),4);
  assert.match(await page.locator('#libraryCount').textContent(),/4 of 8/);
@@ -225,7 +226,7 @@ try{
  await page.waitForFunction(()=>document.getElementById('message').textContent.includes('set to combo 77'));
  assert.match(await page.locator('#message').textContent(),/^3 files set to combo 77\.$/);
  assert.equal(await page.locator('#export').isDisabled(),false); // export unblocks
- assert.match(await page.locator('.library-empty').textContent(),/Nothing left in this view/);
+ assert.match(await page.locator('.library-empty').textContent(),/Nothing in this view/);
  assert.match(await options(),/Needs combo ID \(0\)/);
  await page.locator('#libraryFilter').selectOption('all');
  assert.match(await page.locator('#library button').filter({hasText:'rgb.dcm'}).textContent(),/1 box · combo 77 · source needed/);
