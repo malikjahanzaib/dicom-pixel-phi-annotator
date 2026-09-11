@@ -136,7 +136,7 @@ async function addFiles(files) {
       try {
         const im=await inspectFile(file),existing=state.images.find(x=>x.id===im.id);
         if(existing){if(!existing.file){existing.file=file;reconnected++;}else duplicates++;}else{state.images.push(im);added++;}
-        if(db){try{await saveFile(db,im.id,file);}catch{storageFailed('Image not saved locally · available this session');}}
+        if(db){try{await saveFile(db,im.id,file);}catch{storageFailed('Image not saved · download a backup');}}
       }catch(error){failures.push(`${file.name}: ${error.message}`);}
     }
     $('message').textContent=`${added} added${reconnected?' · '+reconnected+' reconnected':''}${duplicates?' · '+duplicates+' duplicates skipped':''}${failures.length?'\n'+failures.join('\n'):''}`;
@@ -260,11 +260,11 @@ window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.
 // Persistent workspace: only metadata is rewritten after an edit; original files are stored once.
 let ownsWorkspace=true;
 let db=null, saving=Promise.resolve(), revision=0, saveTimer, ready=false, persistenceFailed=false;
-function storageFailed(message){persistenceFailed=true;$('saveStatus').textContent=message || 'Session only · save a backup';state.dirty=true;}
+function storageFailed(message){persistenceFailed=true;$('saveStatus').textContent=message || 'Not saving · download a backup';state.dirty=true;}
 function persist(){
   if(!ready)return;
   state.dirty=true;const rev=++revision;clearTimeout(saveTimer);
-  if(!db){storageFailed(ownsWorkspace?'Session only · storage unavailable':'Session only · another tab owns the workspace');return;}
+  if(!db){storageFailed(ownsWorkspace?'Not saving · storage unavailable':'Not saving · another tab is open');return;}
   $('saveStatus').textContent='Saving…';
   saveTimer=setTimeout(()=>{
     const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id});
@@ -334,7 +334,7 @@ function updateLibrary(){
   if(!shown.length){const empty=document.createElement('div');empty.className='library-empty';empty.innerHTML='<strong></strong><span></span>';
     const [heading,detail]=!total?['No files','Open files or a folder.']
       :query?['No matches','Try another name, path, or combo ID.']
-      :['Nothing in this view','Every file has left this filter.'];
+      :['Nothing in this view','No files match this filter.'];
     empty.querySelector('strong').textContent=heading;empty.querySelector('span').textContent=detail;$('library').append(empty);}
   const combo=current()?.combo||'';
   $('applyComboToShown').hidden=total<2;$('applyComboToShown').disabled=!shown.length||!combo;
@@ -530,9 +530,9 @@ async function initialize(){
     const saved=await loadSession(db);
     if(saved?.version===1){for(const record of saved.images)state.images.push(hydrate(record,await loadFile(db,record.id)));state.index=-1;}
     if(!ownsWorkspace){db.close();db=null;persistenceFailed=true;}
-    ready=true;$('saveStatus').textContent=ownsWorkspace?'Saved locally':'Session only · another tab owns the workspace';
+    ready=true;$('saveStatus').textContent=ownsWorkspace?'Saved locally':'Not saving · another tab is open';
     if(state.images.length)await showImage(Math.max(0,state.images.findIndex(im=>im.id===saved.activeId)));
-  }catch{db=null;ready=true;storageFailed('Session only · storage unavailable');}
+  }catch{db=null;ready=true;storageFailed('Not saving · storage unavailable');}
   for(const id of ['files','folder','restoreBackup'])$(id).disabled=false;
   updateLibrary();updateImageControls();updateZones();
 }
