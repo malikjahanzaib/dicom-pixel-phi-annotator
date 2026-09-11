@@ -51,7 +51,37 @@ DICOM reference dimensions come from Rows/Columns and are checked against decode
 
 `combo{ID}_{WIDTH}x{HEIGHT}_s{N}.png` (and matching DICOM extensions) supplies a combo ID. IDs retain zero padding. For other filenames, enter the pipeline combo ID explicitly, or assign one across a filtered batch from the library view. The application never guesses a device combination from patient, study, or series metadata.
 
-**Export pipeline JSON** preserves the original schema:
+Two export formats are offered, chosen explicitly in the export panel. The selected one is named on the button, decides the file name, and is identifiable from the file itself.
+
+**Attributes (v2)** is the default and is what the downstream repository is keyed by. Each entry is one device combination, carrying the four DICOM attributes read from the files — `(0008,0070)` Manufacturer, `(0008,1090)` ManufacturerModelName, `(0008,0016)` SOPClassUID and `(0018,1020)` SoftwareVersions — with `combo_id` retained only as a convenience label. Values are emitted exactly as the tag carried them: `dicom-parser` strips the padding byte DICOM appends to odd-length strings, and nothing beyond that is trimmed, collapsed or reformatted, because the downstream match is exact-string. An absent attribute is emitted as an empty string and `attributes_source` becomes `partial` rather than the entry being dropped; a promoted imported layout has no file to read and is marked `imported`.
+
+```json
+{
+  "schema_version": 2,
+  "generated_at": "2026-09-11T15:00:00.000Z",
+  "annotations": [
+    {
+      "combo_id": "16",
+      "manufacturer": "GE Medical Systems",
+      "model": "LOGIQ9",
+      "sop_class": "1.2.840.10008.5.1.4.1.1.6.1",
+      "software_version": "LOGIQ9:R7.0.2",
+      "attributes_source": "dicom_tags",
+      "sizes": {
+        "640x480": {
+          "ref_width": 640,
+          "ref_height": 480,
+          "zones": [{"x": 0, "y": 0, "width": 420, "height": 40, "note": "name strip"}]
+        }
+      }
+    }
+  ]
+}
+```
+
+Grouping is by the attributes, not the label. Where files sharing a combo ID disagree on their tags, **the tags win** — the same rule the tool already applies when a filename's dimensions disagree with the raster — and the disagreement is reported in the export panel and again before the file is written, naming the conflicting files. It is never silently merged.
+
+Because v2 is keyed by attributes, a file with no combo ID exports with an empty label rather than being blocked. **Combo (v1, legacy)** is keyed by combo ID, so it still requires one on every annotated file, and is byte-identical to the original schema with no version field:
 
 ```json
 {
@@ -70,7 +100,7 @@ DICOM reference dimensions come from Rows/Columns and are checked against decode
 
 Pipeline export is a **layout union across all files and frames in each combo + size**, plus any imported layout that has been promoted, with exact duplicates removed. Preview renders exactly that union for the open image, which is the only way to see the layout the pipeline will really apply to it. It has no frame indices and is not a frame-by-frame redaction recipe. Use the project backup when frame ownership must be preserved. Every annotated file must have a combo ID before pipeline export is enabled. Empty combos/sizes are omitted.
 
-The export carries **no schema version field**, deliberately: it stays byte-compatible with the consumer reading it today. Adding one is a single change in `buildPipelineExport` — emit `schema_version: 1` beside `generated_at` — worth doing once the pipeline owner confirms the consumer tolerates an unknown key, with absence treated as version 1 so existing files keep loading.
+The legacy format carries **no schema version field**, deliberately: it stays byte-compatible with the consumer that reads it today, and its absence is what identifies it. v2 is self-describing through `schema_version`, so a consumer can tell the two apart by looking for that key.
 
 ## DICOM support and verification
 

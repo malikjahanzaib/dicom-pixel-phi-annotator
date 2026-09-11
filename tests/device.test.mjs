@@ -1,12 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deviceSignature, deviceLabel, deviceDetail, deviceSignatures, sopClassName, hasDevice, shortSoftware } from '../src/device.js';
+import { deviceSignature, deviceLabel, deviceDetail, deviceSignatures, sopClassName, hasDevice, shortSoftware, deviceAttributes, attributesSource, attributeKey } from '../src/device.js';
 const ge = { manufacturer: 'GE Medical Systems', model: 'LOGIQ9', software: 'LOGIQ9:R9.0.0', sopClass: '1.2.840.10008.5.1.4.1.1.6.1' };
 
-test('the four attributes form one comparable signature',()=>{
-  assert.equal(deviceSignature(ge), 'GE Medical Systems|LOGIQ9|1.2.840.10008.5.1.4.1.1.6.1|LOGIQ9:R9.0.0');
-  // Whitespace is normalised, so padded DICOM values still compare equal.
-  assert.equal(deviceSignature({ ...ge, model: '  LOGIQ9 ' }), deviceSignature(ge));
+test('the four attributes form one comparable signature, compared exactly',()=>{
+  const NUL = '\u0000';
+  assert.equal(deviceSignature(ge), ['GE Medical Systems','LOGIQ9','1.2.840.10008.5.1.4.1.1.6.1','LOGIQ9:R9.0.0'].join(NUL));
+  // NUL separates because it cannot occur in a DICOM string value. A printable separator
+  // could appear inside a software version and make two different devices collide.
+  assert.equal(deviceSignature({ ...ge, model: 'A|B', software: '' }), deviceSignature({ ...ge, model: 'A', software: 'B|' }) === undefined ? undefined : deviceSignature({ ...ge, model: 'A|B', software: '' }));
+  assert.notEqual(deviceSignature({ ...ge, model: 'A|B', software: 'C' }), deviceSignature({ ...ge, model: 'A', software: 'B|C' }));
+  // Values are compared exactly: the downstream repository matches these strings, so a
+  // stray space is a different device rather than something to tidy away here.
+  assert.notEqual(deviceSignature({ ...ge, model: ' LOGIQ9' }), deviceSignature(ge));
+  assert.notEqual(deviceSignature({ ...ge, model: 'LOGIQ  9' }), deviceSignature({ ...ge, model: 'LOGIQ 9' }));
   // A change in any one of the four is a different combination.
   for (const field of ['manufacturer','model','software','sopClass'])
     assert.notEqual(deviceSignature({ ...ge, [field]: 'other' }), deviceSignature(ge));
@@ -19,7 +26,7 @@ test('a file with no device tags is unknown, never equal to another unknown',()=
   assert.equal(hasDevice(ge), true);
   assert.equal(hasDevice({ manufacturer: '' }), false);
   // Partial information still signs, so two half-known files are not assumed identical.
-  assert.equal(deviceSignature({ model: 'LOGIQ9' }), '|LOGIQ9||');
+  assert.equal(deviceSignature({ model: 'LOGIQ9' }), ['','LOGIQ9','',''].join('\u0000'));
 });
 
 test('SOP class UIDs read as names, and an unknown one is shown rather than guessed',()=>{
@@ -54,4 +61,21 @@ test('a combo carrying more than one signature is what a wrong ID looks like',()
   // Files with no tags neither create nor mask a disagreement.
   assert.equal(deviceSignatures([file(ge), file({}), file(undefined)]).length, 1);
   assert.deepEqual(deviceSignatures([]), []);
+});
+
+test('extraction keeps tag values verbatim and reports completeness',()=>{
+  // Exactly the four, exactly as the tag carried them — no trimming or reformatting,
+  // because the downstream match is exact-string on these values.
+  assert.deepEqual(deviceAttributes({ ...ge, modality: 'US', bits: 8 }),
+    { manufacturer: 'GE Medical Systems', model: 'LOGIQ9', sopClass: '1.2.840.10008.5.1.4.1.1.6.1', software: 'LOGIQ9:R9.0.0' });
+  assert.deepEqual(deviceAttributes({ manufacturer: ' GE ' }), { manufacturer: ' GE ', model: '', sopClass: '', software: '' });
+  assert.deepEqual(deviceAttributes(undefined), { manufacturer: '', model: '', sopClass: '', software: '' });
+  assert.equal(attributesSource(deviceAttributes(ge)), 'dicom_tags');
+  // One missing attribute is enough to mark the key as not authoritative.
+  assert.equal(attributesSource(deviceAttributes({ ...ge, software: '' })), 'partial');
+  assert.equal(attributesSource(deviceAttributes({})), 'partial');
+  // Unlike the library's signature, the export key always exists, so tagless files group
+  // together and are emitted as partial rather than dropped.
+  assert.equal(attributeKey(deviceAttributes({})), '\u0000\u0000\u0000');
+  assert.equal(deviceSignature({}), null);
 });

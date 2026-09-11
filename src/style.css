@@ -325,6 +325,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .export { flex-shrink: 0; padding: 13px 12px; background: var(--surface); border-top: 1px solid var(--line-strong); }
 .export .micro { display: block; margin-bottom: 4px; }
 #applyComboToShown { margin-top: 5px; }
+#exportFormat { margin-bottom: 6px; }
+#exportFormatHint { margin: 0 0 8px; font-size: 10px; }
+#exportConflicts { margin: 0 0 8px; padding: 7px 9px; border: 1px solid var(--line-strong); border-left: 2px solid var(--flag); border-radius: var(--r); background: var(--sunk); color: #e6c98a; white-space: pre-line; max-height: 120px; overflow: auto; }
 #exportStatus { margin: 0 0 8px; }
 #export { min-height: 30px; }
 

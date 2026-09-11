@@ -193,6 +193,13 @@
       <input id="comboId" type="text" inputmode="numeric" pattern="[0-9]+" placeholder="e.g. 16" disabled>
       <button id="applyComboToShown" class="wide" hidden disabled title="Narrow the library with search or a filter, then give every shown file this combo ID."></button>
       <div id="summary"></div>
+      <label class="micro" for="exportFormat">Format</label>
+      <select id="exportFormat" aria-label="Export format">
+        <option value="v2">Attributes (v2)</option>
+        <option value="v1">Combo (v1, legacy)</option>
+      </select>
+      <p class="note" id="exportFormatHint"></p>
+      <p class="note warn" id="exportConflicts" role="status" hidden></p>
       <p class="note" id="exportStatus" role="status">Draw a box to enable export.</p>
       <button id="export" class="wide primary" disabled>Export pipeline JSON</button>
       <details>

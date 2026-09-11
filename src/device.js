@@ -26,15 +26,32 @@ const SOP_CLASSES = {
   '1.2.840.10008.5.1.4.1.1.4': 'MR Image',
 };
 export const sopClassName = uid => SOP_CLASSES[String(uid || '').trim()] || String(uid || '').trim() || '';
+// Display trims; the exported value never does.
 
-const clean = value => String(value ?? '').replace(/\s+/g, ' ').trim();
-export const hasDevice = metadata => DEVICE_FIELDS.some(field => clean(metadata?.[field]));
+// Values are taken exactly as the tag carried them. dicom-parser already strips the
+// padding byte DICOM appends to odd-length strings, which is padding rather than data;
+// beyond that nothing is trimmed, collapsed or reformatted, because the downstream
+// repository matches these strings exactly and any tidying here would break that match.
+const exact = value => typeof value === 'string' ? value : value == null ? '' : String(value);
+export const deviceAttributes = metadata =>
+  Object.fromEntries(DEVICE_FIELDS.map(field => [field, exact(metadata?.[field])]));
+
+export const hasDevice = metadata => DEVICE_FIELDS.some(field => exact(metadata?.[field]));
+// All four present means the key is authoritative; anything less is flagged so the
+// downstream can tell a complete match from a partial one.
+export const attributesSource = attributes =>
+  DEVICE_FIELDS.every(field => exact(attributes?.[field])) ? 'dicom_tags' : 'partial';
+
+// The grouping key for export: always a string, so files with no tags still group
+// together and are emitted as partial rather than dropped.
+export const attributeKey = attributes => DEVICE_FIELDS.map(field => exact(attributes?.[field])).join('\u0000');
 
 // Null when the file carries none of the four, so "unknown" never compares equal to
-// "unknown" and makes two files look like the same machine.
+// "unknown" and makes two files look like the same machine. This is the library's
+// disagreement check, which is deliberately stricter than the export's grouping.
 export function deviceSignature(metadata) {
   if (!hasDevice(metadata)) return null;
-  return DEVICE_FIELDS.map(field => clean(metadata?.[field])).join('|');
+  return attributeKey(deviceAttributes(metadata));
 }
 
 // Vendors often prefix the software version with the model — "LOGIQ9:R9.0.0". Dropping
@@ -42,7 +59,7 @@ export function deviceSignature(metadata) {
 // rail, which is usually the attribute that distinguishes one combination from another.
 // The signature always uses the raw value.
 export function shortSoftware(metadata) {
-  const software = clean(metadata?.software), model = clean(metadata?.model);
+  const software = exact(metadata?.software).trim(), model = exact(metadata?.model).trim();
   if (!model || !software) return software;
   const prefix = new RegExp(`^${model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[:\\-]\\s*`, 'i');
   return software.replace(prefix, '') || software;
@@ -51,7 +68,7 @@ export function shortSoftware(metadata) {
 // Manufacturer, model and software identify the machine at a glance; the SOP class is
 // carried in the signature and shown where there is room for it.
 export function deviceLabel(metadata) {
-  const parts = [clean(metadata?.manufacturer), clean(metadata?.model), shortSoftware(metadata)].filter(Boolean);
+  const parts = [exact(metadata?.manufacturer).trim(), exact(metadata?.model).trim(), shortSoftware(metadata)].filter(Boolean);
   return parts.join(' · ');
 }
 

@@ -5,6 +5,7 @@ import { sourceZones, reuseTargets, planReuse, applyPlan, describePlan } from '.
 import { extractLines, suggestionBoxes, coverage, toZone, aboveConfidence, DEFAULT_CONFIDENCE } from './ocr.js';
 import { contactFiles, thumbFlags, scaleZones, gridWindow } from './contact.js';
 import { deviceLabel, deviceDetail, hasDevice } from './device.js';
+import { EXPORT_FORMATS, DEFAULT_FORMAT, buildExport, comboConflicts, describeConflicts } from './export.js';
 import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCounts, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment } from './library.js';
 import { inspectFile } from './import.js';
 import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile, loadTemplates, putTemplate, deleteTemplate } from './storage.js';
@@ -14,7 +15,7 @@ import { validatePipelineFile, mergeImported, layoutKey } from './layouts.js';
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d'), viewport = $('viewport');
 const state = { images: [], index: -1, selected: -1, bitmap: null, view: {scale:1,x:0,y:0}, mode:'draw', space:false, drag:null, loadToken:0, dirty:false, preview:false, previewLayout:null,
-  collapsed:new Set(), rows:[], offsets:[0], window:null, suggestions:[], ocrKey:null, ocrBusy:false, layouts:[], ocrFloor:DEFAULT_CONFIDENCE };
+  collapsed:new Set(), rows:[], offsets:[0], window:null, suggestions:[], ocrKey:null, ocrBusy:false, layouts:[], ocrFloor:DEFAULT_CONFIDENCE, format:DEFAULT_FORMAT };
 let cssWidth=1, cssHeight=1;
 const current = () => state.images[state.index];
 const selected = () => current()?.zones[state.selected];
@@ -26,7 +27,7 @@ function toNative(clientX,clientY,bounded=true) {
   const p={x:((clientX-r.left)*cssWidth/r.width-v.x)/v.scale, y:((clientY-r.top)*cssHeight/r.height-v.y)/v.scale};
   return bounded && im ? {x:clamp(p.x,0,im.width), y:clamp(p.y,0,im.height)} : p;
 }
-function buildExport() { return buildPipelineExport(state.images, state.layouts); }
+const exportFormat=()=>EXPORT_FORMATS.find(f=>f.id===state.format)||EXPORT_FORMATS[0];
 function changed() { flushNudge(); state.dirty=true; rememberHistory(); persist(); $('exportStatus').textContent='Unexported changes.'; updateLibrary(); }
 function updateSummary() {
   const groups=new Map(); let count=0,unassigned=0;
@@ -38,10 +39,14 @@ function updateSummary() {
   $('summary').replaceChildren();
   for(const [label,n] of groups){const row=document.createElement('div');row.className='summary-row';const span=document.createElement('span');span.textContent=label;const value=document.createElement('b');value.textContent=`${n} zone${n===1?'':'s'}`;row.append(span,value);$('summary').append(row);}
   if(!count)$('summary').textContent='No zones';
-  $('total').textContent=`${count} zone${count===1?'':'s'}`; $('export').disabled=!count||unassigned>0;
-  $('export').title=unassigned?'Assign combo IDs to all annotated files first.':'';
-  if(unassigned)$('exportStatus').textContent=`${unassigned} zones without a combo ID · filter: Needs combo ID`;
-  else if($('exportStatus').textContent.includes('without a combo ID'))$('exportStatus').textContent='Ready to export.';
+  $('total').textContent=`${count} zone${count===1?'':'s'}`;
+  const blocking=state.format==='v1'&&unassigned>0;
+  $('export').disabled=!count||blocking;
+  $('export').title=blocking?'The combo schema is keyed by combo ID, so every annotated file needs one.':'';
+  if(blocking)$('exportStatus').textContent=`${unassigned} zones without a combo ID · filter: Needs combo ID`;
+  else if(unassigned)$('exportStatus').textContent=`${unassigned} zones have no combo ID · exported with an empty label`;
+  else if(/combo ID/.test($('exportStatus').textContent))$('exportStatus').textContent='Ready to export.';
+  updateExportFormat();
   updateHistoryButtons();refreshPreview();updateToolHint();
 }
 function updateEditor() {
@@ -289,12 +294,27 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('keyup',e=>{if(e.code==='Space'){state.space=false;canvas.style.cursor=state.mode==='pan'?'grab':'crosshair';}});
 window.addEventListener('blur',()=>{state.space=false;cancelDrag();});
+// The chosen format is stated in the button, in the file name and inside the file, so
+// which schema was produced is never a guess.
+function updateExportFormat(){
+  const format=exportFormat(),conflicts=comboConflicts(state.images);
+  $('exportFormat').value=format.id;
+  $('exportFormatHint').textContent=format.hint;
+  $('export').textContent=`Export ${format.label}`;
+  const text=describeConflicts(conflicts);
+  $('exportConflicts').hidden=!text;
+  $('exportConflicts').textContent=text&&`${text}\n\nThe tags win: these files export as separate device combinations.`;
+}
+$('exportFormat').onchange=()=>{state.format=$('exportFormat').value;persist();updateSummary();};
 $('export').onclick=()=>{
   try{
-  if(state.drag)finishDrag();const payload=buildExport();
+  if(state.drag)finishDrag();
+  const format=exportFormat(),conflicts=comboConflicts(state.images);
+  if(conflicts.length&&!confirm(`${describeConflicts(conflicts)}\n\nThe tags win, so these export as separate device combinations. Continue?`))return;
+  const payload=buildExport(format.id,state.images,state.layouts);
   const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\n'],{type:'application/json'}));
-  const a=document.createElement('a');a.href=url;a.download='annotations.json';document.body.append(a);a.click();a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),60000);$('exportStatus').textContent='Exported.';}catch(error){$('exportStatus').textContent=error.message;}
+  const a=document.createElement('a');a.href=url;a.download=format.file;document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);$('exportStatus').textContent=`Exported ${format.label}.`;}catch(error){$('exportStatus').textContent=error.message;}
 };
 window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.returnValue='';}});
 
@@ -308,7 +328,7 @@ function persist(){
   if(!db){storageFailed(ownsWorkspace?'Not saving · storage unavailable':'Not saving · another tab is open');return;}
   $('saveStatus').textContent='Saving…';
   saveTimer=setTimeout(()=>{
-    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed],layouts:state.layouts,ocrFloor:state.ocrFloor,thumbStep});
+    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed],layouts:state.layouts,ocrFloor:state.ocrFloor,thumbStep,format:state.format});
     saving=saving.then(()=>saveSession(db,snapshot)).then(()=>{
       if(rev===revision&&!persistenceFailed){state.dirty=false;$('saveStatus').textContent='Saved locally';}
     }).catch(()=>storageFailed('Save failed · download a backup'));
@@ -1070,6 +1090,7 @@ async function initialize(){
       if(Array.isArray(saved.collapsed))state.collapsed=new Set(saved.collapsed.filter(key=>typeof key==='string'));
       if(Number.isFinite(saved.ocrFloor))state.ocrFloor=clamp(saved.ocrFloor,0,100);
       if(Number.isFinite(saved.thumbStep))thumbStep=clamp(saved.thumbStep,0,THUMB_STEPS.length-1);
+      if(EXPORT_FORMATS.some(f=>f.id===saved.format))state.format=saved.format;
       // Re-validated on the way back in, so a hand-edited store cannot reintroduce a zone
       // that never passed the import checks.
       if(Array.isArray(saved.layouts))try{

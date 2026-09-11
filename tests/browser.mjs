@@ -190,7 +190,40 @@ try{
  console.log('PASS keyboard nudging with clamping and coalesced undo, Tab cycling, and the Escape focus ladder.');
  await page.locator('#windowWidth').fill('350');await page.locator('#windowWidth').press('Tab');await page.locator('#invert').click();assert.match(await page.locator('#zones').textContent(),/w=422/);
  await open('combo16_1024x768');await draw(0,0,670,64,1024,768);
- const payload=await exportJson('#export');assert.deepEqual(Object.keys(payload),['generated_at','annotations']);assert.equal(payload.annotations['16']['640x480'].zones.length,2);assert.equal(payload.annotations['16']['640x480'].zones[1].note,'DOB');assert.equal(payload.annotations['16']['1024x768'].zones[0].width,670);
+ // v2 is the default and is keyed by the device attributes read from the files.
+ assert.equal(await page.locator('#exportFormat').inputValue(),'v2');
+ assert.match(await page.locator('#export').textContent(),/Attributes \(v2\)/);
+ const v2=await exportJson('#export');
+ assert.deepEqual(Object.keys(v2),['schema_version','generated_at','annotations']);
+ assert.equal(v2.schema_version,2);
+ assert.ok(Array.isArray(v2.annotations));
+ const ge=v2.annotations.find(a=>a.software_version==='LOGIQ9:R9.0.0');
+ assert.equal(ge.manufacturer,'GE Medical Systems');
+ assert.equal(ge.model,'LOGIQ9');
+ assert.equal(ge.sop_class,'1.2.840.10008.5.1.4.1.1.6.1');
+ assert.equal(ge.attributes_source,'dicom_tags');
+ assert.equal(ge.combo_id,'16');
+ assert.equal(ge.sizes['640x480'].zones.length,2);
+ assert.equal(ge.sizes['640x480'].zones[1].note,'DOB');
+ // combo16_1024x768 reports a different software version, so it is its own entry — the
+ // tags win over the shared combo label, which is the whole point of v2.
+ const older=v2.annotations.find(a=>a.software_version==='LOGIQ9:R8.0.0');
+ assert.equal(older.combo_id,'16');
+ assert.equal(older.sizes['1024x768'].zones[0].width,670);
+ assert.equal(older.sizes['640x480'],undefined);
+ // That disagreement is surfaced rather than silently merged.
+ assert.equal(await page.locator('#exportConflicts').isVisible(),true);
+ assert.match(await page.locator('#exportConflicts').textContent(),/Combo 16 holds 2 different device combinations/);
+ assert.match(await page.locator('#exportConflicts').textContent(),/combo16_1024x768_s1\.dcm/);
+ // The legacy preset is byte-identical to the original schema, with no version field.
+ await page.locator('#exportFormat').selectOption('v1');
+ assert.match(await page.locator('#export').textContent(),/Combo \(v1, legacy\)/);
+ const payload=await exportJson('#export');
+ assert.deepEqual(Object.keys(payload),['generated_at','annotations']);
+ assert.equal(payload.annotations['16']['640x480'].zones.length,2);
+ assert.equal(payload.annotations['16']['640x480'].zones[1].note,'DOB');
+ assert.equal(payload.annotations['16']['1024x768'].zones[0].width,670);
+ await page.locator('#exportFormat').selectOption('v2');
  console.log('PASS DICOM import, frame-specific boxes, native geometry with anisotropic pixel spacing, zoom, undo/redo, window/level, pipeline JSON.');
  await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved locally');await page.reload();await waitImage();assert.equal(await page.locator('#library .library-item').count(),6);await open('combo16_640x480');assert.match(await page.locator('#zones').textContent(),/patient strip/);await page.locator('#frameNext').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/DOB/);console.log('PASS IndexedDB restores images, frame annotations, notes, and display settings after reload.');
  for(const name of ['rle.dcm','signed16.dcm','mono1.dcm','rgb.dcm']){await open(name);assert.equal(await page.locator('#warning').isVisible(),false,name);const variation=await page.locator('#canvas').evaluate(c=>{const data=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let lo=255,hi=0;for(let i=0;i<data.length;i+=4){lo=Math.min(lo,data[i]);hi=Math.max(hi,data[i]);}return hi-lo;});assert.ok(variation>100,name);}
@@ -198,7 +231,18 @@ try{
  // Exercise a WASM compressed codec using a JPEG created locally from a synthetic canvas.
  const jpeg=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=640;c.height=480;const ctx=c.getContext('2d');ctx.fillStyle='#121212';ctx.fillRect(0,0,640,480);ctx.fillStyle='#eeeeee';ctx.fillRect(0,0,420,40);return c.toDataURL('image/jpeg').split(',')[1];});
  const compressed=path.join(fixtureDir,'jpeg.dcm');await fs.writeFile(compressed,dicom({syntax:'1.2.840.10008.1.2.4.50',photo:'YBR_FULL_422',compressed:Buffer.from(jpeg,'base64')}));await page.locator('#files').setInputFiles(compressed);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 added'));await open('jpeg.dcm');assert.equal(await page.locator('#warning').isVisible(),false);console.log('PASS JPEG baseline DICOM with locally bundled WASM codec.');
- await draw(0,0,420,40);assert.equal(await page.locator('#export').isDisabled(),true);await page.locator('#comboId').fill('022');await page.locator('#comboId').press('Tab');assert.equal(await page.locator('#export').isDisabled(),false);
+ await draw(0,0,420,40);
+ // The export gate follows the key. v2 is keyed by device attributes, so a file with no
+ // combo ID exports with an empty label rather than being blocked by one.
+ assert.equal(await page.locator('#export').isDisabled(),false,'v2 does not need a combo ID');
+ assert.match(await page.locator('#exportStatus').textContent(),/no combo ID · exported with an empty label/);
+ // v1 is keyed by combo, so it still requires one.
+ await page.locator('#exportFormat').selectOption('v1');
+ assert.equal(await page.locator('#export').isDisabled(),true,'v1 is keyed by combo and needs one');
+ assert.match(await page.locator('#exportStatus').textContent(),/without a combo ID/);
+ await page.locator('#comboId').fill('022');await page.locator('#comboId').press('Tab');
+ assert.equal(await page.locator('#export').isDisabled(),false);
+ await page.locator('#exportFormat').selectOption('v2');
  const backup=await exportJson('#backup');assert.equal(backup.format,'occlude-project');assert.ok(backup.images.some(i=>i.frames[1]?.[0]?.note==='DOB'));
  await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved locally');
  await page.screenshot({path:'.test-output/workspace.png',fullPage:true});
@@ -237,6 +281,8 @@ try{
  assert.match(await options(),/Needs combo ID \(4\)/);
  assert.match(await options(),/Source needed \(6\)/);
  assert.match(await options(),/No boxes \(0\)/);
+ // This block is about the combo label, so it checks the gate that depends on one.
+ await page.locator('#exportFormat').selectOption('v1');
  assert.equal(await page.locator('#export').isDisabled(),true);
  await page.locator('#libraryFilter').selectOption('unannotated');
  assert.match(await page.locator('.library-empty').textContent(),/Nothing in this view/);
@@ -255,7 +301,8 @@ try{
  await page.locator('#applyComboToShown').click();
  await page.waitForFunction(()=>document.getElementById('message').textContent.includes('set to combo 77'));
  assert.match(await page.locator('#message').textContent(),/^3 files set to combo 77\.$/);
- assert.equal(await page.locator('#export').isDisabled(),false); // export unblocks
+ assert.equal(await page.locator('#export').isDisabled(),false); // the v1 gate unblocks
+ await page.locator('#exportFormat').selectOption('v2');
  assert.match(await page.locator('.library-empty').textContent(),/Nothing in this view/);
  assert.match(await options(),/Needs combo ID \(0\)/);
  await page.locator('#libraryFilter').selectOption('all');
@@ -479,6 +526,7 @@ try{
  await page.locator('#layoutList .layout').filter({hasText:'Combo 99'}).getByText('Promote to export').click();
  assert.equal(Number((await page.locator('#total').textContent()).match(/\d+/)[0]),zonesBefore+1);
  assert.match(await page.locator('#summary').textContent(),/Combo 99 · 800×600/);
+ await page.locator('#exportFormat').selectOption('v1');
  const withImport=await exportJson('#export');
  // Round trip: the promoted layout re-exports in the frozen schema, byte-shaped as it
  // arrived, alongside the zones that came from real files.
@@ -486,6 +534,13 @@ try{
    zones:[{x:0,y:0,width:80,height:16,note:'prior corner'}]}});
  assert.equal('16' in withImport.annotations,true);
  assert.deepEqual(Object.keys(withImport),['generated_at','annotations']);
+ // The same promoted layout under v2 is marked imported rather than read from tags.
+ await page.locator('#exportFormat').selectOption('v2');
+ const asAttributes=await exportJson('#export');
+ const fromImport=asAttributes.annotations.find(a=>a.attributes_source==='imported');
+ assert.equal(fromImport.combo_id,'99');
+ assert.deepEqual([fromImport.manufacturer,fromImport.model,fromImport.sop_class,fromImport.software_version],['','','','']);
+ assert.deepEqual(fromImport.sizes['800x600'].zones,[{x:0,y:0,width:80,height:16,note:'prior corner'}]);
  // Removing a zone withdraws the confirmation, because what was reviewed changed.
  await page.locator('#layoutList .layout').filter({hasText:'Combo 99'}).locator('.zone-line button').first().click();
  assert.equal(await page.locator('#layoutList .layout').count(),1,'an emptied layout is dropped');
