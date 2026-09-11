@@ -307,7 +307,7 @@ function persist(){
   if(!db){storageFailed(ownsWorkspace?'Not saving · storage unavailable':'Not saving · another tab is open');return;}
   $('saveStatus').textContent='Saving…';
   saveTimer=setTimeout(()=>{
-    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed],layouts:state.layouts,ocrFloor:state.ocrFloor});
+    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed],layouts:state.layouts,ocrFloor:state.ocrFloor,thumbStep});
     saving=saving.then(()=>saveSession(db,snapshot)).then(()=>{
       if(rev===revision&&!persistenceFailed){state.dirty=false;$('saveStatus').textContent='Saved locally';}
     }).catch(()=>storageFailed('Save failed · download a backup'));
@@ -725,13 +725,24 @@ function copyPreviousFrame(){
 $('copyPreviousFrame').onclick=copyPreviousFrame;
 // Contact sheet. Thumbnails decode lazily, cache as small canvases, and the grid renders
 // a window of rows, so opening a thousand-file scope costs a screenful of decodes.
-const THUMB_W=142,THUMB_H=96,CELL_W=156,CELL_H=136,THUMB_CACHE_MAX=400;
+// Four fixed steps rather than a continuous zoom: the window arithmetic needs a definite
+// cell size, and thumbnails are re-decoded per step so enlarging sharpens rather than
+// upscales. The cache is keyed by size, so stepping back down is instant.
+const THUMB_STEPS=[
+  {label:'S', thumb:[100,64],  cell:[114,104]},
+  {label:'M', thumb:[142,96],  cell:[156,136]},
+  {label:'L', thumb:[202,136], cell:[216,176]},
+  {label:'XL',thumb:[286,192], cell:[300,232]},
+];
+const THUMB_CACHE_MAX=400;
+let thumbStep=1,THUMB_W=142,THUMB_H=96,CELL_W=156,CELL_H=136;
 const thumbs=new Map();
 let contactEntries=[],contactPass=0,contactKey=null,thumbVersion=0;
 function thumbLayout(im){
   const union=pipelineLayout(state.images,im.combo,im.width,im.height,state.layouts);
   return union??Object.values(im.frames).flat().map(z=>exportZone(z,im)).filter(Boolean);
 }
+const thumbKey=im=>`${im.id}@${THUMB_W}`;
 async function buildThumb(im){
   if(!im.file)return null;
   let source=null;
@@ -745,17 +756,18 @@ async function buildThumb(im){
   canvas.getContext('2d').drawImage(source,0,0,canvas.width,canvas.height);
   source.close?.();
   if(thumbs.size>=THUMB_CACHE_MAX)thumbs.delete(thumbs.keys().next().value);
-  thumbs.set(im.id,canvas);
+  thumbs.set(thumbKey(im),canvas);
   return canvas;
 }
 let thumbQueue=Promise.resolve();const thumbPending=new Set();
 function requestThumb(im,pass){
-  if(thumbs.has(im.id)||thumbPending.has(im.id)||!im.file)return;
-  thumbPending.add(im.id);
+  const key=thumbKey(im);
+  if(thumbs.has(key)||thumbPending.has(key)||!im.file)return;
+  thumbPending.add(key);
   thumbQueue=thumbQueue.then(async()=>{
     if(pass!==contactPass||!$('contactDialog').open)return;
     try{if(await buildThumb(im)){thumbVersion++;renderContact();}}catch{}
-    finally{thumbPending.delete(im.id);}
+    finally{thumbPending.delete(thumbKey(im));}
   });
 }
 function contactCell(entry){
@@ -764,7 +776,7 @@ function contactCell(entry){
   cell.className='cell'+(flags.length?' flagged':'')+(entry.index===state.index?' active':'');
   cell.title=im.path||im.name;
   const shot=document.createElement('div');shot.className='shot';
-  const cached=thumbs.get(im.id);
+  const cached=thumbs.get(thumbKey(im));
   if(cached){
     // The overlay is the merged layout the pipeline will apply, drawn opaque exactly as
     // Preview draws it, so a mismatch between image and layout is visible at a glance.
@@ -792,7 +804,7 @@ function renderContact(){
   // Rebuild only when the window or a thumbnail actually changed. Without this, every
   // scroll event and every decode replaced the whole grid, so a cell was never still
   // long enough to click.
-  const key=`${grid.from}:${grid.to}:${grid.columns}:${contactEntries.length}:${thumbVersion}`;
+  const key=`${grid.from}:${grid.to}:${grid.columns}:${contactEntries.length}:${thumbVersion}:${thumbStep}`;
   if(contactKey===key)return;
   contactKey=key;
   const canvas=document.createElement('div');canvas.className='contact-canvas';canvas.style.height=`${grid.height}px`;
@@ -811,9 +823,27 @@ function openContact(){
     :`${im.combo?'Combo '+im.combo:'Unassigned'}${scope==='size'?` · ${im.width}×${im.height}`:''}`;
   $('contactCount').textContent=`${contactEntries.length} file${contactEntries.length===1?'':'s'}`;
   $('contactFlagged').textContent=flagged?`${flagged} flagged`:'';
+  applyThumbStep();
   if(!$('contactDialog').open)$('contactDialog').showModal();
   $('contactGrid').scrollTop=0;contactKey=null;renderContact();
 }
+function applyThumbStep(){
+  const step=THUMB_STEPS[thumbStep];
+  [THUMB_W,THUMB_H]=step.thumb;[CELL_W,CELL_H]=step.cell;
+  $('contactGrid').style.setProperty('--cell-w',`${CELL_W}px`);
+  $('contactGrid').style.setProperty('--cell-h',`${CELL_H}px`);
+  $('contactSize').textContent=step.label;
+  $('contactSmaller').disabled=thumbStep===0;
+  $('contactLarger').disabled=thumbStep===THUMB_STEPS.length-1;
+}
+function stepThumbs(by){
+  const next=clamp(thumbStep+by,0,THUMB_STEPS.length-1);
+  if(next===thumbStep)return;
+  thumbStep=next;applyThumbStep();persist();
+  contactKey=null;$('contactGrid').scrollTop=0;renderContact();
+}
+$('contactSmaller').onclick=()=>stepThumbs(-1);
+$('contactLarger').onclick=()=>stepThumbs(1);
 $('openContact').onclick=openContact;
 $('contactScope').onchange=openContact;
 $('closeContact').onclick=()=>$('contactDialog').close();
@@ -990,7 +1020,7 @@ $('importPipeline').onchange=async e=>{
   }catch(error){$('message').textContent=`Layout not imported: ${error.message}`;}
 };
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
-$('backup').onclick=()=>{downloadJSON({format:'pixel-zone-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'occlude-annotations.json');};
+$('backup').onclick=()=>{downloadJSON({format:'occlude-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'occlude-annotations.json');};
 $('restoreBackup').onchange=async e=>{
   const file=e.target.files[0];e.target.value='';if(!file)return;
   try{
@@ -1019,9 +1049,7 @@ async function initialize(){
     // Keep two tabs from silently overwriting the same saved workspace. The secondary tab
     // may view the last save and work in memory; it can export a backup of its own edits.
     if(navigator.locks)ownsWorkspace=await new Promise(resolve=>{
-      // Lock name unchanged across the rename, so a tab open from a previous build still
-      // contends for the same lock and two writers cannot appear mid-upgrade.
-      navigator.locks.request('pixel-zone-workspace-writer',{ifAvailable:true},lock=>{
+      navigator.locks.request('occlude-workspace-writer',{ifAvailable:true},lock=>{
         resolve(!!lock);if(lock)return new Promise(()=>{});
       }).catch(()=>resolve(false));
     });
@@ -1030,6 +1058,7 @@ async function initialize(){
     if(saved?.version===1){for(const record of saved.images)state.images.push(hydrate(record,await loadFile(db,record.id)));state.index=-1;
       if(Array.isArray(saved.collapsed))state.collapsed=new Set(saved.collapsed.filter(key=>typeof key==='string'));
       if(Number.isFinite(saved.ocrFloor))state.ocrFloor=clamp(saved.ocrFloor,0,100);
+      if(Number.isFinite(saved.thumbStep))thumbStep=clamp(saved.thumbStep,0,THUMB_STEPS.length-1);
       // Re-validated on the way back in, so a hand-edited store cannot reintroduce a zone
       // that never passed the import checks.
       if(Array.isArray(saved.layouts))try{

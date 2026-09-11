@@ -36,11 +36,13 @@ test('templates list by combo then size then name, with unassigned last',()=>{
 test('a template file round-trips and refuses anything malformed',()=>{
   const saved = [makeTemplate({ name: 'one', image, zones: [strip], id: 'a' })];
   const file = templateFile(saved);
-  assert.equal(file.format, 'pixel-zone-templates');
+  assert.equal(file.format, 'occlude-templates');
   assert.deepEqual(validateTemplateFile(file).map(t=>t.name), ['one']);
   assert.deepEqual(validateTemplateFile(file)[0].zones, [strip]);
   assert.throws(()=>validateTemplateFile({ format: 'other', version: 1, templates: [] }), /Not an Occlude template file/);
-  assert.throws(()=>validateTemplateFile({ format: 'pixel-zone-templates', version: 2, templates: [] }), /Not an Occlude template file/);
+  assert.throws(()=>validateTemplateFile({ format: 'occlude-templates', version: 2, templates: [] }), /Not an Occlude template file/);
+  // A file written before the rename still loads; only the name written out is new.
+  assert.deepEqual(validateTemplateFile({ ...file, format: 'pixel-zone-templates' }).map(t=>t.name), ['one']);
   // A rectangle outside the template's own raster is rejected, not silently clipped.
   assert.throws(()=>validateTemplateFile({ ...file, templates: [{ ...saved[0], zones: [{ ...strip, width: 900 }] }] }), /lies outside 640×480/);
   assert.throws(()=>validateTemplateFile({ ...file, templates: [{ ...saved[0], zones: [] }] }), /has no zones/);

@@ -4,7 +4,7 @@ import { validatePipelineFile, mergeImported, layoutKey, promotedLayouts } from 
 import { buildPipelineExport, pipelineLayout, hydrate } from '../src/coordinates.js';
 const strip = { x: 0, y: 0, width: 420, height: 40, note: 'patient strip' };
 const dob = { x: 5, y: 45, width: 180, height: 30, note: 'DOB' };
-const file = (zones, over = {}) => ({ format: 'pixel-zone-x', generated_at: 'now',
+const file = (zones, over = {}) => ({ format: 'occlude-x', generated_at: 'now',
   annotations: { 16: { '640x480': { ref_width: 640, ref_height: 480, zones } } }, ...over });
 
 test('a pipeline file parses into standalone layouts keyed by combo and size',()=>{

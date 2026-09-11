@@ -51,7 +51,7 @@ test('the previewed layout is the pipeline union for one combo and size, not one
  assert.deepEqual(pipelineLayout([record],'016',1024,768),[]);
 });
 test('backup validation rejects malformed or off-image coordinates without silently clipping',()=>{
- const backup={format:'pixel-zone-project',version:1,images:[record]};assert.equal(validateBackup(backup)[0].frames[0][0].width,420);
+ const backup={format:'occlude-project',version:1,images:[record]};assert.equal(validateBackup(backup)[0].frames[0][0].width,420);
  const bad=structuredClone(backup);bad.images[0].frames[0][0].width=1000;assert.throws(()=>validateBackup(bad),/outside/);
  const badFrame=structuredClone(backup);badFrame.images[0].frames[99]=[];assert.throws(()=>validateBackup(badFrame),/frame/);
 });

@@ -408,10 +408,12 @@ legend { padding: 0 0 6px; }
 
 /* ---- contact sheet ---------------------------------------------------- */
 
+.contact-zoom { margin-left: auto; flex-shrink: 0; }
+.contact-zoom #contactSize { min-width: 24px; text-align: center; font-size: 10.5px; color: var(--muted); }
 .contact-grid { flex: 1; min-height: 0; overflow: auto; position: relative; border-top: 1px solid var(--line); background: var(--shell); }
 .contact-canvas { position: relative; width: 100%; }
 .contact-pane { position: absolute; top: 0; left: 0; right: 0; display: flex; flex-wrap: wrap; align-content: flex-start; }
-.cell { flex: 0 0 156px; width: 156px; height: 136px; padding: 6px; border: 0; border-radius: 0; background: none; display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.cell { flex: 0 0 var(--cell-w, 156px); width: var(--cell-w, 156px); height: var(--cell-h, 136px); padding: 6px; border: 0; border-radius: 0; background: none; display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
 .cell:hover { background: #1c1c20; }
 .cell:hover .shot { border-color: var(--ink-2); }
 .cell > * { pointer-events: none; }

@@ -191,7 +191,7 @@ try{
  const jpeg=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=640;c.height=480;const ctx=c.getContext('2d');ctx.fillStyle='#121212';ctx.fillRect(0,0,640,480);ctx.fillStyle='#eeeeee';ctx.fillRect(0,0,420,40);return c.toDataURL('image/jpeg').split(',')[1];});
  const compressed=path.join(fixtureDir,'jpeg.dcm');await fs.writeFile(compressed,dicom({syntax:'1.2.840.10008.1.2.4.50',photo:'YBR_FULL_422',compressed:Buffer.from(jpeg,'base64')}));await page.locator('#files').setInputFiles(compressed);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 added'));await open('jpeg.dcm');assert.equal(await page.locator('#warning').isVisible(),false);console.log('PASS JPEG baseline DICOM with locally bundled WASM codec.');
  await draw(0,0,420,40);assert.equal(await page.locator('#export').isDisabled(),true);await page.locator('#comboId').fill('022');await page.locator('#comboId').press('Tab');assert.equal(await page.locator('#export').isDisabled(),false);
- const backup=await exportJson('#backup');assert.equal(backup.format,'pixel-zone-project');assert.ok(backup.images.some(i=>i.frames[1]?.[0]?.note==='DOB'));
+ const backup=await exportJson('#backup');assert.equal(backup.format,'occlude-project');assert.ok(backup.images.some(i=>i.frames[1]?.[0]?.note==='DOB'));
  await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved locally');
  await page.screenshot({path:'.test-output/workspace.png',fullPage:true});
  const secondary=await context.newPage();await secondary.goto(origin);await secondary.waitForFunction(()=>document.getElementById('saveStatus').textContent.toLowerCase().includes('another tab'));await secondary.close();console.log('PASS secondary-tab protection against autosave overwrites.');
@@ -369,6 +369,25 @@ try{
    shotWidth:Math.round(shot.width)};});
  assert.equal(fit.escaped,false,`thumbnail escaped its tile: ${JSON.stringify(fit)}`);
  assert.ok(fit.shotWidth>100,`the thumbnail frame collapsed: ${JSON.stringify(fit)}`);
+ // Thumbnail zoom: four fixed steps, re-decoded per step so enlarging sharpens.
+ const cellWidth=()=>page.locator('#contactGrid .cell').first().evaluate(c=>Math.round(c.getBoundingClientRect().width));
+ assert.equal(await page.locator('#contactSize').textContent(),'M');
+ const medium=await cellWidth();
+ await page.locator('#contactLarger').click();
+ assert.equal(await page.locator('#contactSize').textContent(),'L');
+ await page.waitForFunction(w=>document.querySelector('#contactGrid .cell').getBoundingClientRect().width>w,medium);
+ // Enlarging re-decodes rather than upscaling: the canvas grows with the tile.
+ await page.waitForFunction(()=>{const c=document.querySelector('#contactGrid .cell canvas');return c&&c.width>142;},{},{timeout:60000});
+ await page.locator('#contactLarger').click();
+ assert.equal(await page.locator('#contactSize').textContent(),'XL');
+ assert.equal(await page.locator('#contactLarger').isDisabled(),true,'XL is the last step');
+ for(let i=0;i<3;i++)await page.locator('#contactSmaller').click();
+ assert.equal(await page.locator('#contactSize').textContent(),'S');
+ assert.equal(await page.locator('#contactSmaller').isDisabled(),true,'S is the first step');
+ assert.ok(await cellWidth()<medium);
+ await page.locator('#contactLarger').click();
+ assert.equal(await page.locator('#contactSize').textContent(),'M');
+ assert.equal(await cellWidth(),medium,'stepping back returns to the same geometry');
  // Scope narrows to one raster size, and widens to everything.
  await page.locator('#contactScope').selectOption('size');
  assert.match(await page.locator('#contactCount').textContent(),/^1 file$/);
@@ -422,7 +441,7 @@ try{
  assert.match(await page.locator('#zones').textContent(),/patient strip/);
  // Templates outlive the workspace and the session: they are in their own store.
  const exported=await exportJson('#openTemplates','#exportTemplates');
- assert.equal(exported.format,'pixel-zone-templates');
+ assert.equal(exported.format,'occlude-templates');
  assert.equal(exported.templates.length,1);
  assert.deepEqual(Object.keys(exported.templates[0]).sort(),['combo','createdAt','height','id','name','width','zones']);
  await page.locator('#closeTemplates').click();
@@ -477,7 +496,7 @@ try{
    width:wide?1024:640,height:wide?768:480,frameCount:4,frameIndex:0,
    frames:{0:[{x:0,y:0,width:100,height:20,note:''}]},display:{},metadata:{}});}
  const bulkPath=path.resolve('.test-output/bulk.json');
- await fs.writeFile(bulkPath,JSON.stringify({format:'pixel-zone-project',version:1,images:bulk}));
+ await fs.writeFile(bulkPath,JSON.stringify({format:'occlude-project',version:1,images:bulk}));
  const many=await browser.newContext();const mp=await many.newPage();
  mp.on('dialog',d=>d.accept());mp.on('pageerror',e=>errors.push('bulk: '+e.message));
  await mp.goto(origin);await mp.waitForFunction(()=>!document.getElementById('files').disabled);

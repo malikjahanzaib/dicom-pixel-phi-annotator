@@ -1,7 +1,4 @@
-// Named before the project was renamed to Occlude, and deliberately left alone: the
-// database name is the key to every saved workspace, image and template already on disk.
-// Renaming it would not migrate that data, it would orphan it.
-const DB_NAME = 'pixel-zone-workspace-v1';
+const DB_NAME = 'occlude-workspace-v1';
 export function openDatabase() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 2);
