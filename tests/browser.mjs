@@ -16,7 +16,7 @@ page.on('pageerror',e=>errors.push(e.message));context.on('request',r=>requests.
 await context.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());
 page.on('dialog',d=>d.accept());
 const waitImage=async()=>{await page.waitForFunction(()=>document.getElementById('metadata').textContent.includes('native px')||(!document.getElementById('warning').hidden&&document.getElementById('warning').textContent.startsWith('Unable to open')),{},{timeout:30000});assert.ok((await page.locator('#metadata').textContent()).includes('native px'),await page.locator('#warning').textContent());};
-const open=async(name)=>{await page.locator('#library button').filter({hasText:name}).click();await waitImage();};
+const open=async(name)=>{await page.locator('#library .library-item').filter({hasText:name}).click();await waitImage();};
 async function draw(x,y,right,bottom,w=640,h=480){
  await page.locator('#fit').click();const b=await page.locator('#canvas').boundingBox();const s=Math.min((b.width-36)/w,(b.height-36)/h);const ox=b.x+(b.width-w*s)/2,oy=b.y+(b.height-h*s)/2;
  await page.mouse.move(ox+x*s,oy+y*s);await page.mouse.down();await page.mouse.move(ox+right*s,oy+bottom*s,{steps:5});await page.mouse.up();
@@ -28,6 +28,24 @@ try{
  await page.goto(origin);await page.waitForFunction(()=>!document.getElementById('files').disabled);
  await page.locator('#files').setInputFiles(['combo16_640x480_s1.dcm','combo16_1024x768_s1.dcm','rle.dcm','signed16.dcm','mono1.dcm','rgb.dcm','broken.dcm'].map(n=>path.join(fixtureDir,n)));
  await waitImage();assert.match(await page.locator('#message').textContent(),/6 added/);assert.match(await page.locator('#message').textContent(),/broken.dcm/);
+ // The library groups by combination. Unparsed combos are pinned above the real ones so
+ // they can never be silently annotated under another combo's layout.
+ assert.deepEqual(await page.locator('.lib-group strong').allTextContents(),['Unassigned','Combo 16']);
+ const group=name=>page.locator('.lib-group').filter({hasText:name}).textContent();
+ assert.match(await group('Unassigned'),/4 files · 640×480/);
+ assert.match(await group('Unassigned'),/0\/4/);
+ assert.match(await group('Unassigned'),/needs combo ID/);
+ assert.match(await group('Combo 16'),/2 files · 640×480, 1024×768/);
+ assert.match(await group('Combo 16'),/0\/2/);
+ // A combo carrying two rasters labels them, because a zone only means anything at one size.
+ assert.deepEqual(await page.locator('.lib-size span').allTextContents(),['640×480','1 file','1024×768','1 file']);
+ // Collapsing a finished combo drops its rows and keeps its header — the core batch loop.
+ await page.locator('.lib-group').filter({hasText:'Combo 16'}).click();
+ assert.equal(await page.locator('#library .library-item').count(),4);
+ assert.equal(await page.locator('.lib-size').count(),0);
+ await page.locator('#comboJump').selectOption('16'); // jump-to re-expands and scrolls
+ assert.equal(await page.locator('#library .library-item').count(),6);
+ console.log('PASS library grouped by combination, unassigned pinned, per-size labelling, collapse and jump-to.');
  // Verify the displayed raster itself: pixel spacing must not letterbox or stretch the source.
  await page.locator('#fit').click();const samples=await page.locator('#canvas').evaluate(c=>{const r=c.getBoundingClientRect(),s=Math.min((r.width-36)/640,(r.height-36)/480),dpr=c.width/r.width,ox=(r.width-640*s)/2,oy=(r.height-480*s)/2;return [100,500].map(x=>c.getContext('2d').getImageData(Math.floor((ox+x*s)*dpr),Math.floor((oy+20*s)*dpr),1,1).data[0]);});assert.ok(samples[0]>200&&samples[1]<100,JSON.stringify(samples));
  await draw(0,0,420,40);assert.match(await page.locator('#boxReadout').textContent(),/x=0, y=0, w=420, h=40/);
@@ -155,7 +173,7 @@ try{
  // With nothing selected the arrow keys move between files again.
  await page.keyboard.press('ArrowRight');
  await page.waitForFunction(()=>document.getElementById('viewTitle').textContent.includes('combo16_1024x768'));
- await page.locator('#library button').filter({hasText:'combo16_640x480'}).click();await waitImage();
+ await page.locator('#library .library-item').filter({hasText:'combo16_640x480'}).click();await waitImage();
  assert.match(await page.locator('#frameLabel').textContent(),/2 \/ 3/);
  await page.locator('#framePrevious').click();await waitImage();
  assert.match(await page.locator('#zones').textContent(),/x=0, y=0, w=422, h=40/);
@@ -164,7 +182,7 @@ try{
  await open('combo16_1024x768');await draw(0,0,670,64,1024,768);
  const payload=await exportJson('#export');assert.deepEqual(Object.keys(payload),['generated_at','annotations']);assert.equal(payload.annotations['16']['640x480'].zones.length,2);assert.equal(payload.annotations['16']['640x480'].zones[1].note,'DOB');assert.equal(payload.annotations['16']['1024x768'].zones[0].width,670);
  console.log('PASS DICOM import, frame-specific boxes, native geometry with anisotropic pixel spacing, zoom, undo/redo, window/level, pipeline JSON.');
- await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved locally');await page.reload();await waitImage();assert.equal(await page.locator('#library button').count(),6);await open('combo16_640x480');assert.match(await page.locator('#zones').textContent(),/patient strip/);await page.locator('#frameNext').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/DOB/);console.log('PASS IndexedDB restores images, frame annotations, notes, and display settings after reload.');
+ await page.waitForFunction(()=>document.getElementById('saveStatus').textContent==='Saved locally');await page.reload();await waitImage();assert.equal(await page.locator('#library .library-item').count(),6);await open('combo16_640x480');assert.match(await page.locator('#zones').textContent(),/patient strip/);await page.locator('#frameNext').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/DOB/);console.log('PASS IndexedDB restores images, frame annotations, notes, and display settings after reload.');
  for(const name of ['rle.dcm','signed16.dcm','mono1.dcm','rgb.dcm']){await open(name);assert.equal(await page.locator('#warning').isVisible(),false,name);const variation=await page.locator('#canvas').evaluate(c=>{const data=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let lo=255,hi=0;for(let i=0;i<data.length;i+=4){lo=Math.min(lo,data[i]);hi=Math.max(hi,data[i]);}return hi-lo;});assert.ok(variation>100,name);}
  console.log('PASS RLE, signed 16-bit, MONOCHROME1, and RGB DICOM decoding.');
  // Exercise a WASM compressed codec using a JPEG created locally from a synthetic canvas.
@@ -178,7 +196,7 @@ try{
  const backupPath=path.resolve('.test-output/backup.json');await fs.writeFile(backupPath,JSON.stringify(backup));
  await page.locator('#workspaceMenu').evaluate(e=>e.open=true);await page.locator('#clearWorkspace').click();await page.waitForFunction(()=>document.querySelectorAll('#library button').length===0);
  await page.locator('#restoreBackup').setInputFiles(backupPath);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Backup restored'));
- assert.equal(await page.locator('#library button').count(),7);assert.match(await page.locator('#warning').textContent(),/Source file is missing/);
+ assert.equal(await page.locator('#library .library-item').count(),7);assert.match(await page.locator('#warning').textContent(),/Source file is missing/);
  await page.locator('#files').setInputFiles(path.join(fixtureDir,'combo16_640x480_s1.dcm'));await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 reconnected'));await waitImage();await page.locator('#framePrevious').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/patient strip/);
  await page.locator('#frameNext').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/DOB/);console.log('PASS clear saved data, restore backup, hash-based source reconnection, and frame annotations.');
  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=640;c.height=480;const ctx=c.getContext('2d');ctx.fillStyle='#aaa';ctx.fillRect(0,0,420,40);return c.toDataURL('image/png').split(',')[1];});
@@ -193,12 +211,12 @@ try{
  assert.match(await page.locator('#reusePlan').textContent(),/6 boxes into 6 frames across 6 files/);
  // Reuse is pure annotation metadata: these files lost their sources at the restore step
  // and still receive boxes, so the library counts are the check rather than the canvas.
- const libraryRow=name=>page.locator('#library button').filter({hasText:name}).textContent();
+ const libraryRow=name=>page.locator('#library .library-item').filter({hasText:name}).textContent();
  assert.match(await libraryRow('rgb.dcm'),/0 boxes · source needed/);
  await page.locator('#applyReuse').click();await page.waitForFunction(()=>!document.getElementById('reuseDialog').open);
  assert.match(await page.locator('#message').textContent(),/Copied 6 boxes into 6 frames across 6 files/);
  assert.match(await libraryRow('rgb.dcm'),/1 box · source needed/);
- assert.match(await libraryRow('combo16_1024x768'),/1 box · combo 16 · source needed/);
+ assert.match(await libraryRow('combo16_1024x768'),/1 box · source needed/);
  console.log('PASS combo-filtered batch copy across same-size files, with other rasters excluded.');
  // Batch triage: the filter counts remaining work, and one action clears a whole view.
  // Four files carry copied boxes with no combo ID, so the pipeline export is blocked.
@@ -211,11 +229,11 @@ try{
  await page.locator('#libraryFilter').selectOption('unannotated');
  assert.match(await page.locator('.library-empty').textContent(),/Nothing in this view/);
  await page.locator('#libraryFilter').selectOption('needs-combo');
- assert.equal(await page.locator('#library button').count(),4);
+ assert.equal(await page.locator('#library .library-item').count(),4);
  assert.match(await page.locator('#libraryCount').textContent(),/4 of 8/);
  // The button targets the library view, using the selected file's committed combo ID.
  assert.match(await page.locator('#applyComboToShown').textContent(),/Apply combo 33 to 4 shown files/);
- await page.locator('#library button').filter({hasText:'rgb.dcm'}).click();
+ await page.locator('#library .library-item').filter({hasText:'rgb.dcm'}).click();
  await page.waitForFunction(()=>document.getElementById('viewTitle').textContent.includes('rgb.dcm')&&document.getElementById('comboId').value==='');
  assert.equal(await page.locator('#applyComboToShown').isDisabled(),true); // nothing to propagate yet
  await page.locator('#comboId').fill('77');await page.locator('#comboId').press('Tab');
@@ -229,15 +247,18 @@ try{
  assert.match(await page.locator('.library-empty').textContent(),/Nothing in this view/);
  assert.match(await options(),/Needs combo ID \(0\)/);
  await page.locator('#libraryFilter').selectOption('all');
- assert.match(await page.locator('#library button').filter({hasText:'rgb.dcm'}).textContent(),/1 box · combo 77 · source needed/);
- await page.locator('#search').fill('77');assert.equal(await page.locator('#library button').count(),4); // combo is searchable
- await page.locator('#search').fill('rle');assert.equal(await page.locator('#library button').count(),1);
+ assert.match(await page.locator('#library .library-item').filter({hasText:'rgb.dcm'}).textContent(),/1 box · source needed/);
+ // The combo now reads from the group header rather than being repeated on every row.
+ assert.match(await page.locator('.lib-group').filter({hasText:'Combo 77'}).textContent(),/4 files · 640×480/);
+ assert.match(await page.locator('.lib-group').filter({hasText:'Combo 77'}).textContent(),/4\/4/);
+ await page.locator('#search').fill('77');assert.equal(await page.locator('#library .library-item').count(),4); // combo is searchable
+ await page.locator('#search').fill('rle');assert.equal(await page.locator('#library .library-item').count(),1);
  await page.locator('#search').fill('');
  // Previous/Next follow the view. "combo" matches files 1, 2 and 8 of the eight imported,
  // so stepping across it must skip the six hidden files in between.
  await page.locator('#search').fill('combo');
- assert.equal(await page.locator('#library button').count(),3);
- await page.locator('#library button').filter({hasText:'combo16_1024x768'}).click();
+ assert.equal(await page.locator('#library .library-item').count(),3);
+ await page.locator('#library .library-item').filter({hasText:'combo16_1024x768'}).click();
  await page.waitForFunction(()=>document.getElementById('viewTitle').textContent.includes('combo16_1024x768'));
  assert.match(await page.locator('#counter').textContent(),/^2 of 3$/);
  await page.locator('#next').click();
@@ -257,7 +278,8 @@ try{
  assert.match(await page.locator('#counter').textContent(),/^1 of 1$/);
  assert.equal(await page.locator('#next').isDisabled(),true);
  await page.locator('#search').fill('');
- assert.match(await page.locator('#counter').textContent(),/^3 of 8$/); // unfiltered counter is unchanged
+ // Grouped order pins Unassigned first then sorts combos numerically, so rle.dcm (combo 77) sits fifth.
+ assert.match(await page.locator('#counter').textContent(),/^5 of 8$/);
  console.log('PASS Previous/Next, the arrow keys, and the counter all follow the library view.');
  assert.match(await page.locator('#libraryCount').textContent(),/8 files/);
  await open('combo33_640x480'); // leave a file with a live source selected
@@ -268,5 +290,38 @@ try{
  assert.deepEqual(errors,[]);assert.deepEqual(requests.filter(r=>!r.url.startsWith(origin)&&!r.url.startsWith('blob:')&&!r.url.startsWith('data:')),[]);assert.ok(requests.every(r=>r.method==='GET'));console.log('PASS explicit combo assignment, frame-preserving backup, no external requests or upload API calls.');
  // Persistence unavailable: importing, drawing, and backup must remain usable.
  const memory=await browser.newContext();await memory.addInitScript(()=>Object.defineProperty(window,'indexedDB',{get(){throw Error('Storage disabled');}}));const m=await memory.newPage();m.on('dialog',d=>d.accept());await m.goto(origin);await m.waitForFunction(()=>!document.getElementById('files').disabled);assert.match(await m.locator('#saveStatus').textContent(),/Not saving · storage unavailable/);await m.locator('#files').setInputFiles(path.join(fixtureDir,'rle.dcm'));await m.waitForFunction(()=>document.getElementById('metadata').textContent.includes('native px'));await memory.close();console.log('PASS usable session-only fallback when IndexedDB is unavailable.');
+ // Scale: a thousand files must stay interactive. Restoring a backup builds the workspace
+ // without decoding any pixels, which is exactly the library path under test.
+ const bulk=[];
+ for(let i=0;i<1000;i++){const wide=i%3===0;
+  bulk.push({id:i.toString(16).padStart(64,'0'),name:`combo${(i%20)+1}_${wide?'1024x768':'640x480'}_s${i}.dcm`,
+   path:`combo_${(i%20)+1}/s${i}.dcm`,combo:String((i%20)+1),kind:'DICOM',
+   width:wide?1024:640,height:wide?768:480,frameCount:4,frameIndex:0,
+   frames:{0:[{x:0,y:0,width:100,height:20,note:''}]},display:{},metadata:{}});}
+ const bulkPath=path.resolve('.test-output/bulk.json');
+ await fs.writeFile(bulkPath,JSON.stringify({format:'pixel-zone-project',version:1,images:bulk}));
+ const many=await browser.newContext();const mp=await many.newPage();
+ mp.on('dialog',d=>d.accept());mp.on('pageerror',e=>errors.push('bulk: '+e.message));
+ await mp.goto(origin);await mp.waitForFunction(()=>!document.getElementById('files').disabled);
+ await mp.locator('#restoreBackup').setInputFiles(bulkPath);
+ await mp.waitForFunction(()=>document.getElementById('libraryCount').textContent==='1000 files',{},{timeout:60000});
+ // All 20 groups exist in the model — the jump-to control lists them — while the DOM
+ // holds only a windowed slice of rows, which is the whole point.
+ assert.equal(await mp.locator('#comboJump option').count(),21); // 20 combos + the placeholder
+ assert.ok(await mp.locator('.lib-group').count()<20,'group headers are windowed too');
+ const rendered=await mp.locator('#library .library-item').count();
+ assert.ok(rendered>0&&rendered<80,`expected a windowed slice, rendered ${rendered} rows`);
+ const firstBefore=await mp.locator('#library .library-item').first().getAttribute('title');
+ await mp.locator('#library').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+ await mp.waitForFunction(t=>document.querySelector('#library .library-item')?.title!==t,firstBefore);
+ assert.ok(await mp.locator('#library .library-item').count()<80,'rows are recycled, not accumulated');
+ // Filtering the whole batch stays inside a frame budget.
+ const ms=await mp.evaluate(async()=>{const box=document.getElementById('search');
+  const t=performance.now();box.value='combo_7/';box.dispatchEvent(new Event('input',{bubbles:true}));
+  await new Promise(r=>requestAnimationFrame(r));return performance.now()-t;});
+ assert.ok(ms<400,`filtering 1000 files took ${ms.toFixed(0)}ms`);
+ assert.match(await mp.locator('#libraryCount').textContent(),/ of 1000$/);
+ await many.close();
+ console.log(`PASS 1,000 files: 20 groups, ${rendered} rows in the DOM, filter in ${ms.toFixed(0)}ms.`);
  console.log('ALL BROWSER CHECKS PASSED');
 }catch(error){console.error('Browser state:',await page.locator('#warning').textContent(),await page.locator('#message').textContent(),errors);await page.screenshot({path:'.test-output/failure.png',fullPage:true});throw error;}finally{await context.close();await browser.close();server.kill();}

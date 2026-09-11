@@ -2,13 +2,14 @@
 import { clamp, rectangleBetween, exportZone, parseFilename, buildPipelineExport, pipelineLayout, zoneKey, nudgeZone, cycleIndex, imageRecord, hydrate } from './coordinates.js';
 import { openTagViewer } from './tag-viewer.js';
 import { sourceZones, reuseTargets, planReuse, applyPlan, describePlan } from './reuse.js';
-import { FILTERS, boxCount, filterLibrary, filterCounts, navigation, planComboAssignment, describeComboAssignment } from './library.js';
+import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCounts, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment } from './library.js';
 import { inspectFile } from './import.js';
 import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile } from './storage.js';
 // Images stay in local File objects / IndexedDB. The local server serves app assets only.
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d'), viewport = $('viewport');
-const state = { images: [], index: -1, selected: -1, bitmap: null, view: {scale:1,x:0,y:0}, mode:'draw', space:false, drag:null, loadToken:0, dirty:false, preview:false, previewLayout:null };
+const state = { images: [], index: -1, selected: -1, bitmap: null, view: {scale:1,x:0,y:0}, mode:'draw', space:false, drag:null, loadToken:0, dirty:false, preview:false, previewLayout:null,
+  collapsed:new Set(), rows:[], offsets:[0], window:null };
 let cssWidth=1, cssHeight=1;
 const current = () => state.images[state.index];
 const selected = () => current()?.zones[state.selected];
@@ -55,7 +56,7 @@ function updateZones() {
     choose.onclick=()=>{state.selected=i;updateZones();render();};
     const remove=document.createElement('button');remove.className='remove danger';remove.textContent='×';remove.setAttribute('aria-label',`Delete zone ${i+1}`);remove.onclick=()=>deleteZone(i);
     row.append(choose,remove);$('zones').append(row);
-  });updateEditor();updateSummary();updateReuseButtons();
+  });invalidateCount(current());updateEditor();updateSummary();updateReuseButtons();
 }
 function deleteZone(i=state.selected) {
   if (!current() || i<0 || !current().zones[i]) return;
@@ -221,7 +222,8 @@ for (const k of ['x','y','width','height']) $(k).addEventListener('change',()=>{
   z[k]=clamp(Math.round(value),k==='width'||k==='height'?1:0,k==='x'?im.width-z.width:k==='y'?im.height-z.height:k==='width'?im.width-z.x:im.height-z.y);
   changed();updateZones();render();
 });
-$('note').addEventListener('input',()=>{if(!selected())return;selected().note=$('note').value;changed();updateZones();});
+$('note').addEventListener('input',()=>{if(!selected())return;selected().note=$('note').value;
+  flushNudge();state.dirty=true;rememberHistory();persist();$('exportStatus').textContent='Unexported changes.';updateZones();});
 document.addEventListener('keydown',e=>{
   if(document.querySelector('dialog[open]'))return; // Modal search/navigation must never edit the image behind it.
   if(e.target.closest('input,textarea,select,[contenteditable="true"]'))return;
@@ -267,7 +269,7 @@ function persist(){
   if(!db){storageFailed(ownsWorkspace?'Not saving · storage unavailable':'Not saving · another tab is open');return;}
   $('saveStatus').textContent='Saving…';
   saveTimer=setTimeout(()=>{
-    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id});
+    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed]});
     saving=saving.then(()=>saveSession(db,snapshot)).then(()=>{
       if(rev===revision&&!persistenceFailed){state.dirty=false;$('saveStatus').textContent='Saved locally';}
     }).catch(()=>storageFailed('Save failed · download a backup'));
@@ -314,28 +316,108 @@ function revealSelection(){
 }
 function updateHistoryButtons(){const h=current()?.history.get(current().frameIndex);$('undo').disabled=!h||h.index===0;$('redo').disabled=!h||h.index===h.snapshots.length-1;}
 function travelHistory(direction){if(state.drag)return;flushNudge();const im=current(),h=im?.history.get(im.frameIndex);if(!h)return;const index=h.index+direction;if(index<0||index>=h.snapshots.length)return;h.index=index;im.zones=structuredClone(h.snapshots[index]);state.selected=-1;persist();updateZones();updateLibrary();render();}
-const shownFiles=()=>filterLibrary(state.images,$('search').value,$('libraryFilter').value);
-function updateLibrary(){
-  const query=$('search').value.trim(),filter=$('libraryFilter').value,shown=shownFiles(),total=state.images.length;
-  $('library').replaceChildren();
-  $('libraryCount').textContent=shown.length===total?`${total} file${total===1?'':'s'}`:`${shown.length} of ${total}`;
-  // Counts live in the option labels, so the control that narrows the batch also reports it.
-  const counts=filterCounts(state.images),labels={all:'All files',unannotated:'No boxes',annotated:'Annotated','needs-combo':'Needs combo ID','source-needed':'Source needed'};
-  for(const key of FILTERS){const option=$('libraryFilter').querySelector(`option[value="${key}"]`);option.textContent=`${labels[key]} (${counts[key]})`;}
-  for(const {image:im,index} of shown){
-    const button=document.createElement('button');button.className='library-item'+(index===state.index?' active':'');button.setAttribute('aria-current',String(index===state.index));
-    const badge=document.createElement('span');badge.className='file-type';badge.textContent=im.kind==='DICOM'?'DCM':'PNG';badge.setAttribute('aria-hidden','true');
-    const info=document.createElement('span');info.className='file-info';const title=document.createElement('strong');title.textContent=im.name;
-    const detail=document.createElement('small');const n=boxCount(im);
-    // Single-frame files are the common case; naming their one frame only costs a line wrap.
-    detail.textContent=`${im.width}×${im.height}${im.frameCount>1?` · ${im.frameCount} frames`:''} · ${n} box${n===1?'':'es'}${im.combo?' · combo '+im.combo:''}${im.file?'':' · source needed'}`;
-    info.append(title,detail);button.append(badge,info);button.onclick=()=>showImage(index);$('library').append(button);
+const shownFiles=()=>libraryEntries();
+// Row geometry is fixed so the window can be found by arithmetic instead of measurement.
+// These must match the heights in style.css exactly.
+const ROW_H={group:52,size:22,file:44},OVERSCAN=6,VIRTUALIZE_ABOVE=60;
+function libraryEntries(){
+  const flat=[];
+  for(const row of state.rows) if(row.type==='file') flat.push(row.entry);
+  return flat;
+}
+function buildLibraryModel(){
+  const entries=filterLibrary(state.images,$('search').value,$('libraryFilter').value);
+  const groups=groupLibrary(entries);
+  state.groups=groups;
+  state.rows=libraryRows(groups,state.collapsed);
+  const offsets=[0];let y=0;
+  for(const row of state.rows){y+=ROW_H[row.type];offsets.push(y);}
+  state.offsets=offsets;
+  return groups;
+}
+function visibleRange(){
+  const host=$('library'),rows=state.rows,offsets=state.offsets;
+  if(rows.length<=VIRTUALIZE_ABOVE)return [0,rows.length];
+  const top=host.scrollTop,bottom=top+host.clientHeight;
+  let lo=0,hi=rows.length;
+  while(lo<hi){const mid=(lo+hi)>>1;if(offsets[mid+1]<=top)lo=mid+1;else hi=mid;}
+  let end=lo;while(end<rows.length&&offsets[end]<bottom)end++;
+  return [Math.max(0,lo-OVERSCAN),Math.min(rows.length,end+OVERSCAN)];
+}
+function groupHeader(group){
+  const head=document.createElement('button');
+  head.className='lib-group'+(state.collapsed.has(group.key)?' collapsed':'');
+  head.setAttribute('aria-expanded',String(!state.collapsed.has(group.key)));
+  const title=document.createElement('span');title.className='lib-group-title';
+  const name=document.createElement('strong');name.textContent=group.key===UNASSIGNED?'Unassigned':`Combo ${group.combo}`;
+  title.append(name);
+  if(group.needsCombo){const badge=document.createElement('em');badge.className='badge';badge.textContent='needs combo ID';title.append(badge);}
+  // Progress sits on the title row: it is the number the operator scans for, and the
+  // size list below is long enough to push it out of sight if they share a line.
+  const progress=document.createElement('span');progress.className='lib-progress';
+  progress.textContent=`${group.annotated}/${group.total}`;
+  progress.title=`${group.annotated} of ${group.total} files have zones`;
+  title.append(progress);
+  const meta=document.createElement('span');meta.className='lib-group-meta';
+  meta.textContent=`${group.total} file${group.total===1?'':'s'} · ${group.sizes.map(s=>s.size).join(', ')}`;
+  head.append(title,meta);
+  head.onclick=()=>{
+    if(state.collapsed.has(group.key))state.collapsed.delete(group.key);else state.collapsed.add(group.key);
+    persist();updateLibrary();
+  };
+  return head;
+}
+function sizeHeader(bucket){
+  const row=document.createElement('div');row.className='lib-size';
+  const label=document.createElement('span');label.textContent=bucket.size;
+  const count=document.createElement('span');count.textContent=`${bucket.files.length} file${bucket.files.length===1?'':'s'}`;
+  row.append(label,count);return row;
+}
+function fileRow(entry){
+  const {image:im,index}=entry;
+  const button=document.createElement('button');button.className='library-item'+(index===state.index?' active':'');
+  button.setAttribute('aria-current',String(index===state.index));button.title=im.path||im.name;
+  const badge=document.createElement('span');badge.className='file-type';badge.textContent=im.kind==='DICOM'?'DCM':'PNG';badge.setAttribute('aria-hidden','true');
+  const info=document.createElement('span');info.className='file-info';
+  const title=document.createElement('strong');title.textContent=im.name;
+  const detail=document.createElement('small');detail.dataset.row=String(index);detail.textContent=rowDetail(im);
+  info.append(title,detail);button.append(badge,info);button.onclick=()=>showImage(index);
+  return button;
+}
+// Combo lives in the group header now, so repeating it on every row is noise.
+const rowDetail=im=>{const n=boxCount(im);return `${im.width}\u00d7${im.height}${im.frameCount>1?` · ${im.frameCount} frames`:''} · ${n} box${n===1?'':'es'}${im.file?'':' · source needed'}`;};
+function renderLibraryWindow(){
+  const host=$('library'),rows=state.rows;
+  const [from,to]=visibleRange();
+  const key=`${from}:${to}:${rows.length}`;
+  if(state.window===key)return;
+  state.window=key;
+  const canvas=document.createElement('div');canvas.className='lib-canvas';
+  canvas.style.height=`${state.offsets[rows.length]}px`;
+  const pane=document.createElement('div');pane.className='lib-pane';
+  pane.style.transform=`translateY(${state.offsets[from]}px)`;
+  for(let i=from;i<to;i++){
+    const row=rows[i];
+    pane.append(row.type==='group'?groupHeader(row.group):row.type==='size'?sizeHeader(row.bucket):fileRow(row.entry));
   }
+  canvas.append(pane);host.replaceChildren(canvas);
+}
+function updateLibrary(){
+  const query=$('search').value.trim(),filter=$('libraryFilter').value,total=state.images.length;
+  const groups=buildLibraryModel(),shown=libraryEntries();
+  $('libraryCount').textContent=shown.length===total?`${total} file${total===1?'':'s'}`:`${shown.length} of ${total}`;
+  const counts=filterCounts(state.images),labels={all:'All files',unannotated:'No boxes',annotated:'Annotated','needs-combo':'Needs combo ID','source-needed':'Source needed'};
+  for(const key of FILTERS)$('libraryFilter').querySelector(`option[value="${key}"]`).textContent=`${labels[key]} (${counts[key]})`;
+  $('comboJump').replaceChildren(...[{v:'',t:groups.length?'Jump to combo…':'No combos'},
+    ...groups.map(g=>({v:g.key,t:`${g.key===UNASSIGNED?'Unassigned':'Combo '+g.combo} · ${g.total}`}))]
+    .map(o=>{const option=document.createElement('option');option.value=o.v;option.textContent=o.t;return option;}));
+  $('comboJump').disabled=!groups.length;$('comboJump').value='';
+  state.window=null;renderLibraryWindow();
   if(!shown.length){const empty=document.createElement('div');empty.className='library-empty';empty.innerHTML='<strong></strong><span></span>';
     const [heading,detail]=!total?['No files','Open files or a folder.']
       :query?['No matches','Try another name, path, or combo ID.']
       :['Nothing in this view','No files match this filter.'];
-    empty.querySelector('strong').textContent=heading;empty.querySelector('span').textContent=detail;$('library').append(empty);}
+    empty.querySelector('strong').textContent=heading;empty.querySelector('span').textContent=detail;$('library').replaceChildren(empty);}
   const combo=current()?.combo||'';
   $('applyComboToShown').hidden=total<2;$('applyComboToShown').disabled=!shown.length||!combo;
   $('applyComboToShown').textContent=combo?`Apply combo ${combo} to ${shown.length===total?`all ${total} files`:`${shown.length} shown file${shown.length===1?'':'s'}`}`:'Apply combo ID to shown files';
@@ -343,7 +425,7 @@ function updateLibrary(){
   $('imageSelect').replaceChildren(...shown.map(({image,index})=>{const option=document.createElement('option');option.value=index;option.textContent=image.path;return option;}));
   $('imageSelect').disabled=!shown.length;$('imageSelect').value=state.index;
   const nav=navigation(shown,state.index);
-  $('counter').textContent=`${nav.position??'—'} of ${nav.total}`;
+  $('counter').textContent=`${nav.position??'\u2014'} of ${nav.total}`;
   $('counter').title=nav.position?'':'The open file is not in this library view.';
   $('previous').disabled=nav.previous===null;$('next').disabled=nav.next===null;
 }
@@ -351,6 +433,14 @@ function goRelative(direction){
   const nav=navigation(shownFiles(),state.index),target=direction<0?nav.previous:nav.next;
   if(target!==null)showImage(target);
 }
+$('library').addEventListener('scroll',()=>{if(state.rows.length>VIRTUALIZE_ABOVE)renderLibraryWindow();},{passive:true});
+$('comboJump').onchange=()=>{
+  const key=$('comboJump').value;if(!key)return;
+  state.collapsed.delete(key);updateLibrary();
+  const index=state.rows.findIndex(row=>row.type==='group'&&row.group.key===key);
+  if(index>=0)$('library').scrollTop=state.offsets[index];
+  renderLibraryWindow();$('comboJump').value='';
+};
 // Fidelity rule: the canvas shows only the redaction result, so the accounting for where
 // those zones came from belongs in text rather than in markers drawn over the pixels.
 function previewHint(){
@@ -444,6 +534,7 @@ function reusePlanFor(){
 }
 function commitReuse(plan,zoneCount){
   applyPlan(plan,(image,frame)=>ensureHistory(image,frame));
+  for(const {image} of plan.frames)invalidateCount(image);
   for(const {image,frameIndex} of plan.frames)rememberHistory(image,frameIndex);
   const im=current();
   if(im&&plan.frames.some(f=>f.image.id===im.id&&f.frameIndex===im.frameIndex))state.selected=-1;
@@ -528,7 +619,8 @@ async function initialize(){
     });
     db=await openDatabase();
     const saved=await loadSession(db);
-    if(saved?.version===1){for(const record of saved.images)state.images.push(hydrate(record,await loadFile(db,record.id)));state.index=-1;}
+    if(saved?.version===1){for(const record of saved.images)state.images.push(hydrate(record,await loadFile(db,record.id)));state.index=-1;
+      if(Array.isArray(saved.collapsed))state.collapsed=new Set(saved.collapsed.filter(key=>typeof key==='string'));}
     if(!ownsWorkspace){db.close();db=null;persistenceFailed=true;}
     ready=true;$('saveStatus').textContent=ownsWorkspace?'Saved locally':'Not saving · another tab is open';
     if(state.images.length)await showImage(Math.max(0,state.images.findIndex(im=>im.id===saved.activeId)));

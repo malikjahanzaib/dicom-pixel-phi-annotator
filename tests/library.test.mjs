@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchesFilter, filterLibrary, filterCounts, boxCount, navigation, planComboAssignment, describeComboAssignment } from '../src/library.js';
+import { matchesFilter, filterLibrary, filterCounts, boxCount, invalidateCount, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment, UNASSIGNED } from '../src/library.js';
 const zone={x:0,y:0,width:9,height:9,note:''};
 const file=(over={})=>({name:'scan.dcm',path:'batch-a/scan.dcm',combo:'16',width:640,height:480,frameCount:2,frames:{},file:{},...over});
 const blank=file({name:'blank.dcm',frames:{0:[]}});
@@ -53,6 +53,11 @@ test('navigation steps through the view, skipping hidden files',()=>{
  // Unfiltered, positions match indices so the counter reads exactly as it always did.
  assert.deepEqual(navigation([0,1,2].map(index=>({index})),1),{previous:0,next:2,position:2,total:3});
  assert.equal(navigation([{index:-1}],-1).position,1);
+ // Grouping pins Unassigned above the combos, so display order is not index order.
+ const grouped=[4,5,0,1].map(index=>({index}));
+ assert.deepEqual(navigation(grouped,0),{previous:5,next:1,position:3,total:4});
+ assert.deepEqual(navigation(grouped,4),{previous:null,next:5,position:1,total:4});
+ assert.deepEqual(navigation(grouped,1),{previous:0,next:null,position:4,total:4});
 });
 test('a batch assignment separates new IDs from overwrites and is described before it runs',()=>{
  const plan=planComboAssignment([blank,drawn,noCombo,file({combo:'22'})],'16');
@@ -67,4 +72,48 @@ test('a batch assignment separates new IDs from overwrites and is described befo
  const many=describeComboAssignment(planComboAssignment(['1','2','3','4','5'].map(c=>file({combo:c})),'9'),'9');
  assert.match(many,/\(1, 2, 3, 4, …\)/);
  assert.equal(planComboAssignment([file({combo:'16'})],'16').changed,0);
+});
+
+test('the library groups by combination, pinning unparsed combos above the real ones',()=>{
+ const g=(combo,over={})=>file({combo,...over});
+ const entries=[g('22'),g(''),g('16'),g('16',{width:1024,height:768}),g('2')]
+   .map((image,index)=>({image,index}));
+ const groups=groupLibrary(entries);
+ // Unassigned is pinned first so it can never be mistaken for a real combo; the rest sort numerically.
+ assert.deepEqual(groups.map(x=>x.key),[UNASSIGNED,'2','16','22']);
+ assert.equal(groups[0].needsCombo,true);
+ assert.equal(groups[2].total,2);
+ // Zones are size-specific, so a combo carrying two rasters reports both, ordered.
+ assert.deepEqual(groups[2].sizes.map(s=>s.size),['640×480','1024×768']);
+ assert.deepEqual(groups[2].sizes.map(s=>s.files.length),[1,1]);
+});
+
+test('group progress counts annotated files, not boxes',()=>{
+ const entries=[file({combo:'16',frames:{0:[zone,zone]}}),file({combo:'16',frames:{0:[]}}),file({combo:'16',frames:{0:[zone]}})]
+   .map((image,index)=>({image,index}));
+ const [group]=groupLibrary(entries);
+ assert.equal(group.annotated,2);assert.equal(group.total,3);
+});
+
+test('rows flatten for windowing, and a collapsed group costs exactly one row',()=>{
+ const entries=[file({combo:'16'}),file({combo:'16',width:1024,height:768}),file({combo:'22'})]
+   .map((image,index)=>({image,index}));
+ const groups=groupLibrary(entries);
+ const rows=libraryRows(groups);
+ // Combo 16 has two sizes so it gets size headers; combo 22 has one and is not labelled twice.
+ assert.deepEqual(rows.map(r=>r.type),['group','size','file','size','file','group','file']);
+ const collapsed=libraryRows(groups,new Set(['16']));
+ assert.deepEqual(collapsed.map(r=>r.type),['group','group','file']);
+ assert.deepEqual(libraryRows([]),[]);
+});
+
+test('box counts are cached per image and invalidated only where they changed',()=>{
+ const a=file({frames:{0:[zone]}}),b=file({frames:{0:[zone,zone]}});
+ assert.equal(boxCount(a),1);assert.equal(boxCount(b),2);
+ a.frames[0].push({...zone});
+ assert.equal(boxCount(a),1,'a stale count is served until the edited image is invalidated');
+ invalidateCount(a);
+ assert.equal(boxCount(a),2);
+ assert.equal(boxCount(b),2);
+ invalidateCount(null); // tolerated, so callers need no guard
 });

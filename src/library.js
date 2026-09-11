@@ -1,7 +1,20 @@
 // Library triage: which files are shown, and assigning one combo ID to a whole batch.
 // Kept pure so the counts an operator uses to judge "is this batch finished" are testable.
 export const FILTERS = ['all', 'unannotated', 'annotated', 'needs-combo', 'source-needed'];
-export const boxCount = image => Object.values(image.frames).flat().length;
+export const UNASSIGNED = 'unassigned';
+// Counting walks every frame of an image, so at a thousand multiframe files it is the
+// hot path behind each keystroke. Cache per image; only the edited image is invalidated.
+const counted = new WeakMap();
+export function boxCount(image) {
+  let n = counted.get(image);
+  if (n === undefined) {
+    n = 0;
+    for (const zones of Object.values(image.frames)) n += zones.length;
+    counted.set(image, n);
+  }
+  return n;
+}
+export const invalidateCount = image => { if (image) counted.delete(image); };
 // The same gate buildPipelineExport enforces, so this filter means exactly "blocks export".
 const exportable = image => /^\d+$/.test(image.combo || '');
 export function matchesFilter(image, filter) {
@@ -35,13 +48,62 @@ export function filterCounts(images) {
 // its combo ID can drop it straight out of a "Needs combo ID" filter — so neighbours are
 // defined by underlying position rather than by membership, and position may be null.
 export function navigation(shown, index) {
-  let previous = null, next = null, position = null;
-  for (const [at, entry] of shown.entries()) {
-    if (entry.index < index) previous = entry.index;
-    else if (entry.index === index) position = at + 1;
-    else if (next === null) next = entry.index;
+  // Grouping reorders the view — Unassigned is pinned above the combos — so stepping
+  // follows the order rows are actually drawn in, not the order files were imported.
+  const at = shown.findIndex(entry => entry.index === index);
+  if (at >= 0) return {
+    previous: at > 0 ? shown[at - 1].index : null,
+    next: at < shown.length - 1 ? shown[at + 1].index : null,
+    position: at + 1, total: shown.length };
+  // The open file is not in the view at all; fall back to the nearest row on either
+  // side by underlying position, so there is still somewhere to step to.
+  let previous = null, next = null;
+  for (const entry of shown) { if (entry.index < index) previous = entry.index; else if (next === null) next = entry.index; }
+  return { previous, next, position: null, total: shown.length };
+}
+const sizeKey = image => `${image.width}\u00d7${image.height}`;
+// One group per device combination, because the operator works a combo at a time.
+// Files whose combo could not be parsed go to a pinned group of their own rather than
+// being folded into a real combo, where they would be annotated under the wrong layout.
+export function groupLibrary(entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const combo = entry.image.combo || '';
+    const key = combo || UNASSIGNED;
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, combo, files: [], sizes: [], annotated: 0, needsCombo: !combo };
+      groups.set(key, group);
+    }
+    group.files.push(entry);
+    if (boxCount(entry.image)) group.annotated++;
+    const size = sizeKey(entry.image);
+    let bucket = group.sizes.find(s => s.size === size);
+    if (!bucket) group.sizes.push(bucket = { size, width: entry.image.width, height: entry.image.height, files: [] });
+    bucket.files.push(entry);
   }
-  return { previous, next, position, total: shown.length };
+  for (const group of groups.values()) {
+    group.total = group.files.length;
+    group.sizes.sort((a, b) => a.width - b.width || a.height - b.height);
+  }
+  return [...groups.values()].sort((a, b) =>
+    (a.key === UNASSIGNED ? -1 : 0) - (b.key === UNASSIGNED ? -1 : 0) ||
+    Number(a.combo) - Number(b.combo) || a.combo.localeCompare(b.combo));
+}
+// A flat row list is what makes windowing possible: collapsed groups contribute their
+// header only, so the rendered DOM never grows with the size of the batch.
+export function libraryRows(groups, collapsed = new Set()) {
+  const rows = [];
+  for (const group of groups) {
+    rows.push({ type: 'group', group });
+    if (collapsed.has(group.key)) continue;
+    const single = group.sizes.length === 1;
+    for (const bucket of group.sizes) {
+      if (!single) rows.push({ type: 'size', group, bucket });
+      for (const entry of bucket.files) rows.push({ type: 'file', group, entry });
+    }
+  }
+  return rows;
 }
 export function planComboAssignment(images, combo) {
   const unchanged = [], assigned = [], overwritten = [];
