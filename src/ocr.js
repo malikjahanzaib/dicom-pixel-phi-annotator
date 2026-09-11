@@ -8,9 +8,16 @@ import { clamp } from './coordinates.js';
 // the safe direction; padding in is not.
 export const OCR_PADDING = 4;
 export const MAX_NOTE = 80;
+// Speckle in an ultrasound reads to the engine as low-confidence text lines. The operator
+// sets the floor, because where it belongs depends on the modality and the overlay: a
+// clean DICOM annotation burn scores high, a caption over tissue does not.
+export const DEFAULT_CONFIDENCE = 60;
+// A single glyph is never a caption worth redacting on its own, and is the single most
+// common thing the engine hallucinates out of texture.
+export const MIN_TEXT = 2;
 
 // A line with no alphanumeric character is engine noise over anatomy, not text.
-const readable = text => /[a-z0-9]/i.test(text || '');
+const readable = text => (String(text || '').match(/[a-z0-9]/gi) || []).length >= MIN_TEXT;
 const cleanText = text => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_NOTE);
 const key = box => `${box.x}|${box.y}|${box.width}|${box.height}`;
 
@@ -49,6 +56,10 @@ export const isCovered = (box, zones) => zones.some(zone =>
   box.x >= zone.x && box.y >= zone.y &&
   box.x + box.width <= zone.x + zone.width &&
   box.y + box.height <= zone.y + zone.height);
+
+// Confidence filtering is separate from parsing so the threshold can be moved without
+// running the engine again — and so nothing is thrown away, only hidden.
+export const aboveConfidence = (boxes, threshold) => boxes.filter(box => box.confidence >= threshold);
 
 export function coverage(suggestions, zones) {
   const uncovered = suggestions.filter(box => !isCovered(box, zones));

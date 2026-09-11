@@ -137,6 +137,11 @@
       <section id="ocrSection" hidden>
         <div class="rail-title"><h2>Detected text</h2><span id="ocrCount" class="num">0</span></div>
         <p class="caveat" id="ocrCaveat">OCR misses text, especially low-contrast overlays. It shows where text was found — never that an image is clean. Coverage remains yours to confirm.</p>
+        <label class="slider" for="ocrConfidence">
+          <span>Confidence floor</span><b id="ocrConfidenceValue" class="num">60%</b>
+        </label>
+        <input id="ocrConfidence" type="range" min="0" max="100" step="5" value="60"
+               aria-label="Minimum OCR confidence to show a suggestion">
         <div id="ocrStatus" class="note" role="status"></div>
         <div class="btn-row" id="ocrActions">
           <button id="acceptAllOcr">Accept all</button>

@@ -305,7 +305,7 @@ try{
  assert.ok(detected>=2,`expected both text lines, got ${detected}`);
  // Every suggestion starts uncovered, and the wording reports findings, never a verdict.
  const status=await page.locator('#ocrStatus').textContent();
- assert.match(status,/text regions detected · \d+ not covered by a zone/);
+ assert.match(status,/text regions shown · \d+ not covered by a zone/);
  assert.doesNotMatch(status,/clean|all PHI|complete|safe|verified/i);
  assert.ok(await page.locator('#ocrCaveat').isVisible(),'the caveat is standing, not dismissible');
  assert.match(await page.locator('#ocrCaveat').textContent(),/never that an image is clean/);
@@ -320,6 +320,20 @@ try{
  const [,bx,by,bw]=box.match(/x=(\d+), y=(\d+), w=(\d+)/).map(Number);
  assert.ok(bx>=0&&by>=0&&bw>0&&bx+bw<=640,`accepted box must lie inside the raster: ${box}`);
  assert.equal(Number(await page.locator('#ocrCount').textContent()),detected-1);
+ // The confidence floor filters the detections already in hand, without re-running OCR.
+ const shownAt60=Number(await page.locator('#ocrCount').textContent());
+ await page.locator('#ocrConfidence').fill('95');
+ assert.equal(await page.locator('#ocrConfidenceValue').textContent(),'95%');
+ const shownAt95=Number(await page.locator('#ocrCount').textContent());
+ assert.ok(shownAt95<=shownAt60,'raising the floor cannot reveal more');
+ await page.locator('#ocrConfidence').fill('0');
+ assert.ok(Number(await page.locator('#ocrCount').textContent())>=shownAt60,'lowering it brings them back');
+ // Whatever the floor hides is reported, so nothing disappears quietly.
+ await page.locator('#ocrConfidence').fill('100');
+ const held=await page.locator('#ocrStatus').textContent();
+ if(Number(await page.locator('#ocrCount').textContent())===0)assert.match(held,/Lower the floor to see them|No text regions detected/);
+ await page.locator('#ocrConfidence').fill('60');
+ assert.equal(Number(await page.locator('#ocrCount').textContent()),shownAt60,'the floor is a view, not a deletion');
  await page.screenshot({path:'.test-output/ocr.png'});
  await page.locator('#acceptAllOcr').click();
  assert.equal(await page.locator('#zones .zone').count(),detected);

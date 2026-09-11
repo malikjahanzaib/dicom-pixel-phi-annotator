@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractLines, suggestionBoxes, isCovered, coverage, toZone, OCR_PADDING } from '../src/ocr.js';
+import { extractLines, suggestionBoxes, isCovered, coverage, toZone, aboveConfidence, OCR_PADDING, DEFAULT_CONFIDENCE } from '../src/ocr.js';
 const image = { width: 640, height: 480 };
 const line = (x0, y0, x1, y1, text = 'SMITH^JANE', confidence = 88) => ({ bbox: { x0, y0, x1, y1 }, text, confidence });
 
@@ -29,6 +29,9 @@ test('a detection becomes a padded, clamped, native-pixel box',()=>{
 test('noise, empty boxes and duplicates never reach the operator',()=>{
   // No alphanumeric character means the engine found texture, not text.
   assert.deepEqual(suggestionBoxes([line(10,10,80,20,'~ ..'), line(10,10,80,20,'|')], image), []);
+  // One stray glyph is the commonest thing speckle is misread as, and is never a caption.
+  assert.deepEqual(suggestionBoxes([line(10,10,80,20,'l'), line(10,10,80,20,'. 7 .')], image), []);
+  assert.equal(suggestionBoxes([line(10,10,80,20,'2D')], image).length, 1);
   assert.deepEqual(suggestionBoxes([{ text: 'DOB' }], image), []);
   // The same line reported twice is one suggestion.
   assert.equal(suggestionBoxes([line(10,10,80,20), line(10,10,80,20)], image).length, 1);
@@ -57,4 +60,20 @@ test('accepting a suggestion drops everything the export must not carry',()=>{
   const [box] = suggestionBoxes([line(100,50,300,70)], image);
   assert.deepEqual(Object.keys(toZone(box)), ['x','y','width','height','note']);
   assert.equal('confidence' in toZone(box), false);
+});
+
+test('the confidence floor hides weak detections without discarding them',()=>{
+  const boxes = suggestionBoxes([
+    line(10,10,300,30,'LEFT RETROAREOLAR',93),
+    line(10,60,300,80,'AREA OF PAIN',88),
+    line(10,120,600,140,'wmm aa',21),      // speckle read as a text line
+    line(10,180,600,200,'r ee te',44),
+  ], image);
+  assert.equal(boxes.length, 4, 'everything the engine returned is kept');
+  assert.deepEqual(aboveConfidence(boxes, DEFAULT_CONFIDENCE).map(b=>b.note), ['LEFT RETROAREOLAR','AREA OF PAIN']);
+  // Lowering the floor reveals them again — no second run of the engine is needed.
+  assert.equal(aboveConfidence(boxes, 40).length, 3);
+  assert.equal(aboveConfidence(boxes, 0).length, 4);
+  assert.equal(aboveConfidence(boxes, 100).length, 0);
+  assert.deepEqual(aboveConfidence([], 60), []);
 });

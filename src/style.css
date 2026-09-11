@@ -290,6 +290,10 @@ canvas:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
    hue: dashed and cool where zones are solid and amber. A machine guess must never be
    mistakable for something the operator has confirmed. */
 .caveat { margin: 0 0 9px; padding: 8px 10px; border: 1px solid var(--line-strong); border-left: 2px solid var(--ocr); border-radius: var(--r); background: var(--sunk); font-size: 10.5px; line-height: 1.55; color: var(--ink-2); }
+.slider { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+.slider span { font-size: 9.5px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase; color: var(--muted); }
+.slider b { font-weight: 400; font-size: 10.5px; color: var(--ink-2); }
+#ocrConfidence { width: 100%; padding: 0; margin-bottom: 8px; border: 0; background: none; accent-color: var(--ocr); cursor: pointer; }
 #ocrStatus { margin-bottom: 9px; font-variant-numeric: tabular-nums; }
 #ocrActions { margin-bottom: 9px; }
 #ocrList { display: flex; flex-direction: column; max-height: 210px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); }
