@@ -144,6 +144,48 @@
         </label>
         <input id="ocrConfidence" type="range" min="0" max="100" step="5" value="60"
                aria-label="Minimum OCR confidence to show a suggestion">
+        <details id="detectSettings">
+          <summary>Detection settings<span id="detectSummary" class="num"></span></summary>
+          <div class="detect-grid">
+            <label for="detectGranularity">Boxes
+              <select id="detectGranularity">
+                <option value="word">One per word</option>
+                <option value="line">One per line</option>
+                <option value="paragraph">One per paragraph</option>
+                <option value="block">One per block</option>
+              </select>
+            </label>
+            <label for="detectScale">Upscale
+              <select id="detectScale">
+                <option value="1">None</option>
+                <option value="2">2× — small text</option>
+                <option value="3">3× — very small text</option>
+                <option value="4">4×</option>
+              </select>
+            </label>
+          </div>
+          <label class="slider" for="detectPadding"><span>Padding</span><b id="detectPaddingValue" class="num">4 px</b></label>
+          <input id="detectPadding" type="range" min="0" max="40" step="1" value="4">
+          <label class="slider" for="detectMerge"><span>Merge gap</span><b id="detectMergeValue" class="num">off</b></label>
+          <input id="detectMerge" type="range" min="0" max="80" step="1" value="0">
+          <div class="detect-grid">
+            <label for="detectMinWidth">Min width<input id="detectMinWidth" type="number" min="0" max="400" step="1" value="6"></label>
+            <label for="detectMinHeight">Min height<input id="detectMinHeight" type="number" min="0" max="400" step="1" value="6"></label>
+            <label for="detectMinChars">Min chars<input id="detectMinChars" type="number" min="1" max="20" step="1" value="2"></label>
+            <label for="detectProfile">Profile
+              <select id="detectProfile"><option value="">Custom</option></select>
+            </label>
+          </div>
+          <div class="detect-save">
+            <input id="profileName" type="text" maxlength="40" placeholder="Name these settings" aria-label="Detection profile name">
+            <button id="saveProfile" disabled>Save</button>
+          </div>
+          <div class="btn-row">
+            <button id="deleteProfile" disabled>Delete profile</button>
+            <button id="resetDetect">Defaults</button>
+          </div>
+          <p class="note" id="detectNote">Every control but Upscale reshapes the last run instantly. Upscale changes what the engine reads, so it applies on the next Detect text.</p>
+        </details>
         <div id="ocrStatus" class="note" role="status"></div>
         <div class="btn-row" id="ocrActions">
           <button id="acceptAllOcr">Accept all</button>

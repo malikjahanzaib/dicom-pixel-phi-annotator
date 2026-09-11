@@ -2,7 +2,7 @@
 import { clamp, rectangleBetween, exportZone, parseFilename, buildPipelineExport, pipelineLayout, zoneKey, nudgeZone, cycleIndex, imageRecord, hydrate } from './coordinates.js';
 import { openTagViewer } from './tag-viewer.js';
 import { sourceZones, reuseTargets, planReuse, applyPlan, describePlan } from './reuse.js';
-import { extractLines, suggestionBoxes, coverage, toZone, aboveConfidence, DEFAULT_CONFIDENCE } from './ocr.js';
+import { detectionsFrom, visibleDetections, aboveConfidence, coverage, toZone, validateSettings, validateProfiles, sameSettings, DEFAULT_SETTINGS, ENGINE_SETTINGS, MAX_PROFILES } from './ocr.js';
 import { contactFiles, thumbFlags, scaleZones, gridWindow } from './contact.js';
 import { deviceLabel, deviceDetail, hasDevice } from './device.js';
 import { EXPORT_FORMATS, DEFAULT_FORMAT, buildExport, comboConflicts, describeConflicts, exportRows, customFormatId, findFormat } from './export.js';
@@ -16,7 +16,7 @@ import { validatePipelineFile, mergeImported, layoutKey } from './layouts.js';
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d'), viewport = $('viewport');
 const state = { images: [], index: -1, selected: -1, bitmap: null, view: {scale:1,x:0,y:0}, mode:'draw', space:false, drag:null, loadToken:0, dirty:false, preview:false, previewLayout:null,
-  collapsed:new Set(), rows:[], offsets:[0], window:null, suggestions:[], ocrKey:null, ocrBusy:false, layouts:[], ocrFloor:DEFAULT_CONFIDENCE, format:DEFAULT_FORMAT };
+  collapsed:new Set(), rows:[], offsets:[0], window:null, suggestions:[], ocrBusy:false, layouts:[], detect:{...DEFAULT_SETTINGS}, format:DEFAULT_FORMAT };
 let cssWidth=1, cssHeight=1;
 const current = () => state.images[state.index];
 const selected = () => current()?.zones[state.selected];
@@ -332,7 +332,7 @@ function persist(){
   if(!db){storageFailed(ownsWorkspace?'Not saving · storage unavailable':'Not saving · another tab is open');return;}
   $('saveStatus').textContent='Saving…';
   saveTimer=setTimeout(()=>{
-    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed],layouts:state.layouts,ocrFloor:state.ocrFloor,thumbStep,format:state.format});
+    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed],layouts:state.layouts,detect:state.detect,profiles,thumbStep,format:state.format});
     saving=saving.then(()=>saveSession(db,snapshot)).then(()=>{
       if(rev===revision&&!persistenceFailed){state.dirty=false;$('saveStatus').textContent='Saved locally';}
     }).catch(()=>storageFailed('Save failed · download a backup'));
@@ -539,73 +539,102 @@ function togglePreview(){
 $('preview').onclick=togglePreview;
 // Detection runs against the native raster, so a box the engine reports is already in the
 // coordinate space every zone uses — no display transform is involved at any point.
-function nativeRaster(im){
-  const canvas=document.createElement('canvas');canvas.width=im.width;canvas.height=im.height;
-  canvas.getContext('2d').drawImage(state.bitmap,0,0,im.width,im.height);
+// Upscaling only changes what the engine reads: detectionsFrom divides the factor back out,
+// so a box is reported in source-raster pixels whatever this was drawn at.
+function nativeRaster(im,scale=1){
+  const canvas=document.createElement('canvas');
+  canvas.width=im.width*scale;canvas.height=im.height*scale;
+  const context=canvas.getContext('2d');
+  context.imageSmoothingQuality='high';
+  context.drawImage(state.bitmap,0,0,canvas.width,canvas.height);
   return canvas;
 }
 const coveredBySomeZone=(box,zones)=>zones.some(z=>box.x>=z.x&&box.y>=z.y&&box.x+box.width<=z.x+z.width&&box.y+box.height<=z.y+z.height);
-const ocrResults=new Map();            // "<image id>:<frame>" → every detection, session only
+// The engine's raw output is what is cached, not the boxes drawn from it. Every setting
+// but Upscale is a pure function of that output, so moving one re-derives in place instead
+// of putting the operator through another run.
+const ocrResults=new Map();            // "<image id>:<frame>" → one run, session only
 const ocrKeyFor=im=>im?`${im.id}:${im.frameIndex}`:null;
+const boxKey=b=>`${b.x}|${b.y}|${b.width}|${b.height}`;
+let detectRevision=0;                  // bumped whenever the settings change
+function derive(entry,im){
+  const all=detectionsFrom(entry.data,im,state.detect,entry.scale);
+  entry.hidden=all.length-aboveConfidence(all,state.detect.confidence).length;
+  entry.boxes=visibleDetections(all,state.detect).filter(box=>!entry.dropped.has(boxKey(box)));
+  entry.revision=detectRevision;
+  return entry;
+}
+function entryFor(im){
+  const entry=ocrResults.get(ocrKeyFor(im));
+  if(!entry)return null;
+  return entry.revision===detectRevision?entry:derive(entry,im);
+}
 // Restore any detection already made for this image and frame instead of discarding it,
 // so stepping through a combo does not re-run the engine on every return.
 function clearSuggestions(){
-  const im=current(),key=ocrKeyFor(im);
-  state.ocrKey=key;state.raw=key&&ocrResults.get(key)||[];
-  applyConfidenceFloor();
-}
-function rememberSuggestions(){if(state.ocrKey)ocrResults.set(state.ocrKey,state.raw);}
-// The floor hides weak detections; it never discards them, so lowering it brings them
-// straight back without another run of the engine.
-function applyConfidenceFloor(){
-  state.suggestions=aboveConfidence(state.raw||[],state.ocrFloor);
+  const entry=entryFor(current());
+  state.suggestions=entry?entry.boxes:[];
   updateOcrPanel();
 }
+// Accepting or dismissing removes a box for good; re-deriving must not bring it back.
+function dropBoxes(boxes){
+  const entry=entryFor(current());if(!entry)return;
+  for(const box of boxes)entry.dropped.add(boxKey(box));
+  entry.boxes=entry.boxes.filter(box=>!boxes.includes(box));
+  state.suggestions=entry.boxes;
+}
+// Settings are global, so every cached run is stale at once. They re-derive on next sight.
+function detectSettingsChanged(){
+  detectRevision++;
+  clearSuggestions();render();persist();
+}
 const uncoveredFor=im=>{
-  const found=ocrResults.get(ocrKeyFor(im));
-  return found?coverage(found,Object.values(im.frames).flat()).uncovered:0;
+  const entry=entryFor(im);
+  return entry?coverage(entry.boxes,Object.values(im.frames).flat()).uncovered:0;
 };
 async function detectText(){
   const im=current();
   if(!im||!state.bitmap||state.ocrBusy)return;
   state.ocrBusy=true;$('detectText').disabled=true;
-  updateOcrPanel('Reading the image…');
+  const scale=state.detect.scale;
+  updateOcrPanel(scale>1?`Reading the image at ${scale}×…`:'Reading the image…');
   const token=state.loadToken,frame=im.frameIndex;
-  state.raw=state.raw||[];
   try{
     const {recognize}=await import('./ocr-engine.js');
-    const data=await recognize(nativeRaster(im));
+    const data=await recognize(nativeRaster(im,scale));
     if(token!==state.loadToken||im.frameIndex!==frame)return;   // the operator moved on
-    state.raw=suggestionBoxes(extractLines(data),im);
-    state.ocrKey=`${im.id}:${frame}`;rememberSuggestions();
-    applyConfidenceFloor();render();
+    ocrResults.set(`${im.id}:${frame}`,derive({data,scale,dropped:new Set()},im));
+    const entry=entryFor(im);
+    state.suggestions=entry.boxes;
+    updateOcrPanel();render();
   }catch(error){
-    state.raw=[];state.suggestions=[];state.ocrKey=null;
+    ocrResults.delete(ocrKeyFor(im));
+    state.suggestions=[];
     updateOcrPanel(`Could not run detection: ${error?.message||'the local OCR engine did not start.'}`);
   }finally{state.ocrBusy=false;updateImageControls();}
 }
 function acceptSuggestion(box){
   const im=current();if(!im)return;
   ensureHistory();im.zones.push(toZone(box));
-  state.raw=(state.raw||[]).filter(s=>s!==box);state.suggestions=state.suggestions.filter(s=>s!==box);rememberSuggestions();
+  dropBoxes([box]);
   state.selected=im.zones.length-1;
   changed();updateOcrPanel();updateZones();render();
 }
-function dismissSuggestion(box){state.raw=(state.raw||[]).filter(s=>s!==box);state.suggestions=state.suggestions.filter(s=>s!==box);rememberSuggestions();updateOcrPanel();render();}
+function dismissSuggestion(box){dropBoxes([box]);updateOcrPanel();render();}
 // Wording is load-bearing: it reports what was found and what is uncovered, and never
 // characterises the image. "No text detected" is not "no text present".
 const ocrStatusText=()=>{
   const report=coverage(state.suggestions,current()?.zones||[]);
-  const hidden=(state.raw||[]).length-state.suggestions.length;
-  const below=hidden?` · ${hidden} below ${state.ocrFloor}%`:'';
+  const hidden=entryFor(current())?.hidden||0;
+  const below=hidden?` · ${hidden} below ${state.detect.confidence}%`:'';
   if(report.detected)return `${report.detected} text region${report.detected===1?'':'s'} shown · ${report.uncovered} not covered by a zone${below}`;
   return hidden
-    ?`Nothing above ${state.ocrFloor}% confidence · ${hidden} weaker detection${hidden===1?'':'s'} hidden. Lower the floor to see them.`
+    ?`Nothing above ${state.detect.confidence}% confidence · ${hidden} weaker detection${hidden===1?'':'s'} hidden. Lower the floor to see them.`
     :'No text regions detected on this frame. That is not a finding of "no text".';
 };
 function updateOcrPanel(status){
   const boxes=state.suggestions,im=current();
-  $('ocrSection').hidden=!boxes.length&&!(state.raw||[]).length&&status===undefined&&!state.ocrBusy;
+  $('ocrSection').hidden=!boxes.length&&!entryFor(im)&&status===undefined&&!state.ocrBusy;
   $('ocrCount').textContent=String(boxes.length);
   $('ocrStatus').textContent=status??ocrStatusText();
   $('acceptAllOcr').disabled=!boxes.length;$('dismissAllOcr').disabled=!boxes.length;
@@ -622,21 +651,67 @@ function updateOcrPanel(status){
   }
 }
 $('detectText').onclick=detectText;
-$('ocrConfidence').addEventListener('input',()=>{
-  state.ocrFloor=Number($('ocrConfidence').value);
-  $('ocrConfidenceValue').textContent=`${state.ocrFloor}%`;
-  applyConfidenceFloor();render();persist();
+// ─── Detection settings ──────────────────────────────────────────────────────────────
+let profiles=[];
+const GRANULARITY_LABEL={word:'words',line:'lines',paragraph:'paragraphs',block:'blocks'};
+const DETECT_INPUTS=[
+  ['detectGranularity','granularity'],['detectScale','scale'],['detectPadding','padding'],
+  ['detectMerge','mergeGap'],['detectMinWidth','minWidth'],['detectMinHeight','minHeight'],
+  ['detectMinChars','minChars'],['ocrConfidence','confidence'],
+];
+const activeProfile=()=>profiles.find(p=>sameSettings(p.settings,state.detect));
+// The settings panel is collapsed by default, so the summary has to carry enough for the
+// operator to see what the last run was shaped by without opening it.
+function showDetectSettings(){
+  for(const [id,field] of DETECT_INPUTS)$(id).value=String(state.detect[field]);
+  $('ocrConfidenceValue').textContent=`${state.detect.confidence}%`;
+  $('detectPaddingValue').textContent=`${state.detect.padding} px`;
+  $('detectMergeValue').textContent=state.detect.mergeGap?`${state.detect.mergeGap} px`:'off';
+  const profile=activeProfile();
+  $('detectProfile').replaceChildren(new Option('Custom',''),
+    ...profiles.map(p=>new Option(p.name,p.name)));
+  $('detectProfile').value=profile?profile.name:'';
+  $('deleteProfile').disabled=!profile;
+  $('saveProfile').disabled=!$('profileName').value.trim()||(profiles.length>=MAX_PROFILES&&!profile);
+  const scale=state.detect.scale>1?` · ${state.detect.scale}×`:'';
+  $('detectSummary').textContent=profile?`${profile.name}${scale}`:`${GRANULARITY_LABEL[state.detect.granularity]} · ${state.detect.confidence}%${scale}`;
+}
+function setDetect(patch){
+  state.detect=validateSettings({...state.detect,...patch});
+  showDetectSettings();
+  // Upscale only changes what the engine is handed, so nothing already run is affected.
+  if(Object.keys(patch).every(field=>ENGINE_SETTINGS.includes(field))){persist();return;}
+  detectSettingsChanged();
+}
+for(const [id,field] of DETECT_INPUTS)$(id).addEventListener('input',()=>setDetect({[field]:
+  field==='granularity'?$(id).value:Number($(id).value)}));
+$('resetDetect').onclick=()=>setDetect({...DEFAULT_SETTINGS});
+$('detectProfile').addEventListener('change',()=>{
+  const found=profiles.find(p=>p.name===$('detectProfile').value);
+  if(found)setDetect(found.settings);else showDetectSettings();
 });
+$('profileName').addEventListener('input',showDetectSettings);
+$('saveProfile').onclick=()=>{
+  const name=$('profileName').value.trim();
+  if(!name)return;
+  profiles=validateProfiles([...profiles.filter(p=>p.name.toLowerCase()!==name.toLowerCase()),{name,settings:state.detect}]);
+  $('profileName').value='';showDetectSettings();persist();
+  $('message').textContent=`Saved “${name}”. A profile shapes suggestions only — no zone and no export is affected by it.`;
+};
+$('deleteProfile').onclick=()=>{
+  const found=activeProfile();if(!found)return;
+  profiles=profiles.filter(p=>p!==found);showDetectSettings();persist();
+};
 $('acceptAllOcr').onclick=()=>{
   const im=current();if(!im||!state.suggestions.length)return;
   ensureHistory();
-  const taking=new Set(state.suggestions);
-  for(const box of state.suggestions)im.zones.push(toZone(box));
-  state.raw=(state.raw||[]).filter(s=>!taking.has(s));state.suggestions=[];rememberSuggestions();state.selected=-1;
+  const taking=[...state.suggestions];
+  for(const box of taking)im.zones.push(toZone(box));
+  dropBoxes(taking);state.selected=-1;
   changed();updateOcrPanel();updateZones();render();
   $('message').textContent='Accepted suggestions are ordinary zones now — check coverage, then use Copy to… to reuse them across the combo.';
 };
-$('dismissAllOcr').onclick=()=>{const dropping=new Set(state.suggestions);state.raw=(state.raw||[]).filter(s=>!dropping.has(s));state.suggestions=[];rememberSuggestions();updateOcrPanel();render();};
+$('dismissAllOcr').onclick=()=>{dropBoxes([...state.suggestions]);updateOcrPanel();render();};
 function updateToolHint(){
   $('toolHint').textContent=!state.bitmap?'Open an image to begin.':state.preview?previewHint():state.mode==='pan'?'Drag to pan.':state.mode==='window'?'Drag ↔ for contrast, ↕ for brightness.':state.hideZones?'Boxes hidden.':selected()?'Drag to move or resize · arrows nudge 1 px, Shift 10 px · Tab for next box':'Drag to draw · Shift-drag to overlap · arrows move between files';
 }
@@ -1207,7 +1282,9 @@ async function initialize(){
     const saved=await loadSession(db);
     if(saved?.version===1){for(const record of saved.images)state.images.push(hydrate(record,await loadFile(db,record.id)));state.index=-1;
       if(Array.isArray(saved.collapsed))state.collapsed=new Set(saved.collapsed.filter(key=>typeof key==='string'));
-      if(Number.isFinite(saved.ocrFloor))state.ocrFloor=clamp(saved.ocrFloor,0,100);
+      // ocrFloor was the whole of the settings before they were separable.
+      state.detect=validateSettings(saved.detect??(Number.isFinite(saved.ocrFloor)?{...DEFAULT_SETTINGS,confidence:saved.ocrFloor}:null));
+      profiles=validateProfiles(saved.profiles);
       if(Number.isFinite(saved.thumbStep))thumbStep=clamp(saved.thumbStep,0,THUMB_STEPS.length-1);
       if(EXPORT_FORMATS.some(f=>f.id===saved.format))state.format=saved.format;
       // Re-validated on the way back in, so a hand-edited store cannot reintroduce a zone
@@ -1224,7 +1301,7 @@ async function initialize(){
     if(state.images.length)await showImage(Math.max(0,state.images.findIndex(im=>im.id===saved.activeId)));
   }catch{db=null;ready=true;storageFailed('Not saving · storage unavailable');}
   for(const id of ['files','folder','restoreBackup'])$(id).disabled=false;
-  $('ocrConfidence').value=String(state.ocrFloor);$('ocrConfidenceValue').textContent=`${state.ocrFloor}%`;
+  showDetectSettings();
   updateLibrary();updateImageControls();updateZones();updateLayoutPanel();
 }
 initialize();

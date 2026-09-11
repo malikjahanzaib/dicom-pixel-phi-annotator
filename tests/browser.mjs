@@ -395,6 +395,44 @@ try{
  if(Number(await page.locator('#ocrCount').textContent())===0)assert.match(held,/Lower the floor to see them|No text regions detected/);
  await page.locator('#ocrConfidence').fill('60');
  assert.equal(Number(await page.locator('#ocrCount').textContent()),shownAt60,'the floor is a view, not a deletion');
+ // Detection settings reshape the run already in hand. Granularity is the coarsest of
+ // them: words split what lines join, so the count must rise and every box must shrink.
+ await page.locator('#detectSettings > summary').click();
+ const lineBoxes=await page.locator('#ocrList .ocr-accept small').allTextContents();
+ await page.locator('#detectGranularity').selectOption('word');
+ const wordBoxes=await page.locator('#ocrList .ocr-accept small').allTextContents();
+ assert.ok(wordBoxes.length>lineBoxes.length,`words must split lines: ${lineBoxes.length} → ${wordBoxes.length}`);
+ const widthOf=text=>Number(text.match(/· (\d+)×/)[1]);
+ assert.ok(Math.max(...wordBoxes.map(widthOf))<=Math.max(...lineBoxes.map(widthOf)),'a word box cannot be wider than the widest line');
+ // Merging puts them back together without another run of the engine.
+ await page.locator('#detectMerge').fill('30');
+ assert.equal(await page.locator('#detectMergeValue').textContent(),'30 px');
+ assert.ok((await page.locator('#ocrList .ocr-accept').count())<wordBoxes.length,'a merge gap joins neighbours');
+ await page.locator('#detectMerge').fill('0');
+ // Padding is the tightness control and still may not escape the raster.
+ await page.locator('#detectPadding').fill('40');
+ assert.equal(await page.locator('#detectPaddingValue').textContent(),'40 px');
+ for(const text of await page.locator('#ocrList .ocr-accept small').allTextContents()){
+  const [,px,,pw]=text.match(/^(\d+),(\d+) · (\d+)×/).map(Number);
+  assert.ok(px>=0&&px+pw<=640,`padding must clamp to the raster: ${text}`);
+ }
+ // A profile is a name for the settings, and applying it restores every one of them.
+ assert.equal(await page.locator('#saveProfile').isDisabled(),true,'a profile needs a name');
+ await page.locator('#profileName').fill('Tight words');
+ await page.locator('#saveProfile').click();
+ assert.equal(await page.locator('#detectProfile').inputValue(),'Tight words');
+ assert.match(await page.locator('#detectSummary').textContent(),/Tight words/);
+ await page.locator('#resetDetect').click();
+ assert.equal(await page.locator('#detectGranularity').inputValue(),'line');
+ assert.equal(await page.locator('#detectProfile').inputValue(),'','defaults are not the saved profile');
+ await page.locator('#detectProfile').selectOption('Tight words');
+ assert.equal(await page.locator('#detectGranularity').inputValue(),'word');
+ assert.equal(await page.locator('#detectPadding').inputValue(),'40');
+ await page.locator('#deleteProfile').click();
+ assert.equal(await page.locator('#detectProfile').locator('option').count(),1,'only Custom is left');
+ await page.locator('#resetDetect').click();
+ assert.equal(Number(await page.locator('#ocrCount').textContent()),shownAt60,'defaults return the run to where it was');
+ await page.locator('#detectSettings > summary').click();
  await page.screenshot({path:'.test-output/ocr.png'});
  await page.locator('#acceptAllOcr').click();
  assert.equal(await page.locator('#zones .zone').count(),detected);

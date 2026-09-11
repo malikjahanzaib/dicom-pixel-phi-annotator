@@ -298,6 +298,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .slider span { font-size: 9.5px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase; color: var(--muted); }
 .slider b { font-weight: 400; font-size: 10.5px; color: var(--ink-2); }
 #ocrConfidence { width: 100%; padding: 0; margin-bottom: 8px; border: 0; background: none; accent-color: var(--ocr); cursor: pointer; }
+#detectSettings { margin-bottom: 9px; padding: 8px 9px; border: 1px solid var(--line); border-radius: var(--r); }
+#detectSettings[open] { background: var(--sunk); }
+#detectSettings > summary { display: flex; justify-content: space-between; gap: 8px; }
+#detectSettings > *:not(summary) { margin-top: 7px; }
+#detectSettings input[type="range"] { width: 100%; padding: 0; margin: 0; border: 0; background: none; accent-color: var(--ocr); cursor: pointer; }
+#detectSettings .slider { margin-bottom: 2px; }
+#detectSettings .btn-row { margin-top: 6px; }
+.detect-save { display: flex; gap: 6px; }
+.detect-save input { flex: 1; min-width: 0; }
+#detectNote { line-height: 1.5; }
+.detect-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 7px; }
+.detect-grid label { display: block; font-size: 9.5px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase; color: var(--muted); }
+.detect-grid input, .detect-grid select { width: 100%; margin-top: 3px; }
+#detectSummary { font-weight: 400; letter-spacing: 0; text-transform: none; }
+
 #ocrStatus { margin-bottom: 9px; font-variant-numeric: tabular-nums; }
 #ocrActions { margin-bottom: 9px; }
 #ocrList { display: flex; flex-direction: column; max-height: 210px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); }

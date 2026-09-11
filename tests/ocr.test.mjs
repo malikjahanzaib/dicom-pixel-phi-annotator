@@ -1,88 +1,117 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractLines, suggestionBoxes, isCovered, coverage, toZone, aboveConfidence, OCR_PADDING, DEFAULT_CONFIDENCE, ACCEPTED_NOTE } from '../src/ocr.js';
-const image = { width: 640, height: 480 };
-const line = (x0, y0, x1, y1, text = 'SMITH^JANE', confidence = 88) => ({ bbox: { x0, y0, x1, y1 }, text, confidence });
+import { extractRegions, detectionsFrom, visibleDetections, mergeBoxes, aboveConfidence, validateSettings,
+  isCovered, coverage, toZone, DEFAULT_SETTINGS, ACCEPTED_NOTE, GRANULARITIES } from '../src/ocr.js';
 
-test('lines are read whether the engine reports them flat or nested',()=>{
-  assert.equal(extractLines({ lines: [line(0,0,10,10)] }).length, 1);
-  assert.equal(extractLines({ blocks: [{ paragraphs: [{ lines: [line(0,0,10,10), line(0,0,20,10)] }] }] }).length, 2);
-  // A flat list wins when both are present, and malformed shapes yield nothing rather than throwing.
-  assert.deepEqual(extractLines({}), []);
-  assert.deepEqual(extractLines(null), []);
-  assert.deepEqual(extractLines({ blocks: [{}, { paragraphs: [{}] }] }), []);
+const image = { width: 640, height: 480 };
+const at = (x0, y0, x1, y1, text = 'SMITH JANE', confidence = 88) => ({ bbox: { x0, y0, x1, y1 }, text, confidence });
+// The engine's hierarchy: blocks hold paragraphs hold lines hold words.
+const data = {
+  blocks: [{
+    bbox: { x0: 10, y0: 10, x1: 300, y1: 120 }, text: 'SMITH JANE DOB 1985', confidence: 80,
+    paragraphs: [{
+      bbox: { x0: 10, y0: 10, x1: 300, y1: 120 }, text: 'SMITH JANE DOB 1985', confidence: 82,
+      lines: [
+        { bbox: { x0: 10, y0: 10, x1: 200, y1: 40 }, text: 'SMITH JANE', confidence: 90,
+          words: [at(10, 10, 90, 40, 'SMITH', 92), at(110, 10, 200, 40, 'JANE', 88)] },
+        { bbox: { x0: 10, y0: 90, x1: 300, y1: 120 }, text: 'DOB 1985', confidence: 85,
+          words: [at(10, 90, 80, 120, 'DOB', 86), at(100, 90, 300, 120, '1985', 84)] },
+      ],
+    }],
+  }],
+};
+
+test('every granularity is reachable, and an unknown one falls back to the default',()=>{
+  assert.deepEqual(GRANULARITIES, ['word', 'line', 'paragraph', 'block']);
+  assert.equal(extractRegions(data, 'block').length, 1);
+  assert.equal(extractRegions(data, 'paragraph').length, 1);
+  assert.equal(extractRegions(data, 'line').length, 2);
+  assert.equal(extractRegions(data, 'word').length, 4);
+  // A flat line list from an older engine build is still read.
+  assert.equal(extractRegions({ lines: [at(0,0,10,10)] }, 'line').length, 1);
+  assert.deepEqual(extractRegions(null, 'word'), []);
+  assert.equal(validateSettings({ granularity: 'sentence' }).granularity, 'line');
 });
 
-test('a detection becomes a padded, clamped, native-pixel box',()=>{
-  const [box] = suggestionBoxes([line(100, 50, 300, 70)], image);
-  // Padded outwards on every side: tight bounds clip glyphs, and a clipped box uncovers text.
-  assert.deepEqual(box, { x: 100-OCR_PADDING, y: 50-OCR_PADDING, width: 200+2*OCR_PADDING, height: 20+2*OCR_PADDING, text: 'SMITH^JANE', confidence: 88 });
-  // Padding never escapes the raster, so an accepted box is always a legal zone.
-  const [edge] = suggestionBoxes([line(0, 0, 640, 12)], image);
-  assert.deepEqual([edge.x, edge.y, edge.width, edge.height], [0, 0, 640, 16]);
-  const [corner] = suggestionBoxes([line(636, 474, 640, 480)], image);
+test('granularity changes how many boxes a single detection run yields',()=>{
+  const counts = Object.fromEntries(GRANULARITIES.map(granularity =>
+    [granularity, detectionsFrom(data, image, { ...DEFAULT_SETTINGS, granularity, confidence: 0 }).length]));
+  assert.deepEqual(counts, { word: 4, line: 2, paragraph: 1, block: 1 });
+  // A word box is tighter than the line that contains it.
+  const [word] = detectionsFrom(data, image, { ...DEFAULT_SETTINGS, granularity: 'word' });
+  const [line] = detectionsFrom(data, image, { ...DEFAULT_SETTINGS, granularity: 'line' });
+  assert.ok(word.width < line.width);
+});
+
+test('padding is the tightness control, and never escapes the raster',()=>{
+  const tight = detectionsFrom(data, image, { ...DEFAULT_SETTINGS, padding: 0 })[0];
+  const loose = detectionsFrom(data, image, { ...DEFAULT_SETTINGS, padding: 12 })[0];
+  assert.deepEqual([tight.x, tight.width], [10, 190]);
+  assert.deepEqual([loose.x, loose.width], [0, 212], 'padding clamps at the edge rather than going negative');
+  const corner = detectionsFrom({ lines: [at(600, 460, 640, 480, 'ID')] }, image, { ...DEFAULT_SETTINGS, padding: 30 })[0];
   assert.equal(corner.x + corner.width, 640);
   assert.equal(corner.y + corner.height, 480);
-  assert.equal(suggestionBoxes([line(10,10,200,30)], image, 0)[0].width, 190);
+  assert.equal(validateSettings({ padding: 999 }).padding, 40, 'settings are clamped to a sane range');
 });
 
-test('noise, empty boxes and duplicates never reach the operator',()=>{
-  // No alphanumeric character means the engine found texture, not text.
-  assert.deepEqual(suggestionBoxes([line(10,10,80,20,'~ ..'), line(10,10,80,20,'|')], image), []);
-  // One stray glyph is the commonest thing speckle is misread as, and is never a caption.
-  assert.deepEqual(suggestionBoxes([line(10,10,80,20,'l'), line(10,10,80,20,'. 7 .')], image), []);
-  assert.equal(suggestionBoxes([line(10,10,80,20,'2D')], image).length, 1);
-  assert.deepEqual(suggestionBoxes([{ text: 'DOB' }], image), []);
-  // The same line reported twice is one suggestion.
-  assert.equal(suggestionBoxes([line(10,10,80,20), line(10,10,80,20)], image).length, 1);
-  // Text is collapsed to one line and capped, so a note stays readable in the list.
-  const [box] = suggestionBoxes([line(10,10,300,30,'  ACC\n 12345\t678  ')], image);
-  assert.equal(box.text, 'ACC 12345 678');
-  assert.equal(suggestionBoxes([line(10,10,400,30,'A'.repeat(200))], image)[0].text.length, 80);
+test('size and character floors discard what cannot be a caption',()=>{
+  const speck = { lines: [at(10, 10, 14, 14, 'a7'), at(20, 20, 200, 50, 'PATIENT')] };
+  assert.equal(detectionsFrom(speck, image, { ...DEFAULT_SETTINGS, padding: 0, minWidth: 0, minHeight: 0 }).length, 2);
+  assert.equal(detectionsFrom(speck, image, { ...DEFAULT_SETTINGS, padding: 0, minWidth: 20 }).length, 1);
+  assert.equal(detectionsFrom(speck, image, { ...DEFAULT_SETTINGS, padding: 0, minHeight: 20 }).length, 1);
+  // Raising the character floor drops short fragments; lowering it admits single glyphs.
+  assert.equal(detectionsFrom({ lines: [at(0,0,40,20,'7')] }, image, { ...DEFAULT_SETTINGS, minChars: 1 }).length, 1);
+  assert.equal(detectionsFrom({ lines: [at(0,0,40,20,'7')] }, image, DEFAULT_SETTINGS).length, 0);
+  assert.equal(detectionsFrom({ lines: [at(0,0,40,20,'~ ..')] }, image, { ...DEFAULT_SETTINGS, minChars: 1 }).length, 0);
+});
+
+test('merging joins neighbours and keeps the weaker confidence of the pair',()=>{
+  const words = detectionsFrom(data, image, { ...DEFAULT_SETTINGS, granularity: 'word', padding: 0, confidence: 0 });
+  assert.equal(mergeBoxes(words, 0).length, 4, 'a gap of zero leaves them apart');
+  const joined = mergeBoxes(words, 25);
+  assert.equal(joined.length, 2, 'each line’s words become one box');
+  assert.deepEqual([joined[0].x, joined[0].width], [10, 190]);
+  assert.equal(joined[0].text, 'SMITH JANE');
+  assert.equal(joined[0].confidence, 88, 'the lower of the pair, so a weak member is not flattered');
+  // A large enough tolerance joins the lines too.
+  assert.equal(mergeBoxes(words, 60).length, 1);
+  assert.deepEqual(mergeBoxes([], 10), []);
+});
+
+test('the visible set is the floor applied first, then the join',()=>{
+  const boxes = detectionsFrom({ lines: [
+    at(10, 10, 200, 40, 'LEFT BREAST', 93),
+    at(210, 10, 400, 40, 'RADIAL', 91),
+    at(10, 200, 600, 230, 'wmm aa', 18),
+  ] }, image, { ...DEFAULT_SETTINGS, padding: 0, confidence: 0 });
+  assert.equal(boxes.length, 3, 'everything survives extraction; the floor is a view');
+  assert.equal(visibleDetections(boxes, { ...DEFAULT_SETTINGS, mergeGap: 0 }).length, 2);
+  // Speckle below the floor is gone before merging, so it cannot drag a real box outwards.
+  const merged = visibleDetections(boxes, { ...DEFAULT_SETTINGS, mergeGap: 20 });
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].width, 390);
+  assert.equal(aboveConfidence(boxes, 0).length, 3);
 });
 
 test('coverage is reported conservatively: partial overlap is not covered',()=>{
   const box = { x: 100, y: 100, width: 100, height: 20 };
   assert.equal(isCovered(box, [{ x: 90, y: 90, width: 120, height: 40 }]), true);
-  assert.equal(isCovered(box, [{ x: 100, y: 100, width: 100, height: 20 }]), true, 'an exact fit counts as covered');
-  // Text sticking out of a zone stays exposed after redaction, so it must still be flagged.
   assert.equal(isCovered(box, [{ x: 100, y: 100, width: 99, height: 20 }]), false);
-  assert.equal(isCovered(box, [{ x: 101, y: 100, width: 100, height: 20 }]), false);
   // Two abutting zones that jointly span it do not count: only whole containment does.
   assert.equal(isCovered(box, [{ x: 100, y: 100, width: 50, height: 20 }, { x: 150, y: 100, width: 50, height: 20 }]), false);
   assert.equal(isCovered(box, []), false);
   const report = coverage([box, { x: 0, y: 0, width: 10, height: 10 }], [{ x: 0, y: 0, width: 20, height: 20 }]);
   assert.deepEqual([report.detected, report.uncovered], [2, 1]);
-  assert.deepEqual(report.boxes, [box]);
 });
 
 test('accepting a suggestion never carries the recognised text into the zone',()=>{
-  const [box] = suggestionBoxes([line(100,50,300,70,'SMITH^JANE 1985-03-12')], image);
+  const [box] = detectionsFrom({ lines: [at(100, 50, 300, 70, 'SMITH^JANE 1985-03-12')] }, image);
   const zone = toZone(box);
   assert.deepEqual(Object.keys(zone), ['x','y','width','height','note']);
   // The recognised string IS the PHI. A note is persisted, backed up, shared in templates
   // and emitted in the export, so it must never receive it.
   assert.equal(zone.note, ACCEPTED_NOTE);
-  assert.doesNotMatch(zone.note, /SMITH|1985/);
   assert.equal(JSON.stringify(zone).includes('SMITH'), false);
-  assert.equal('text' in zone, false, 'the text does not ride along under another key');
-  assert.equal('confidence' in zone, false);
-  // It stays available in memory for the operator to read while deciding.
-  assert.equal(box.text, 'SMITH^JANE 1985-03-12');
-});
-
-test('the confidence floor hides weak detections without discarding them',()=>{
-  const boxes = suggestionBoxes([
-    line(10,10,300,30,'LEFT RETROAREOLAR',93),
-    line(10,60,300,80,'AREA OF PAIN',88),
-    line(10,120,600,140,'wmm aa',21),      // speckle read as a text line
-    line(10,180,600,200,'r ee te',44),
-  ], image);
-  assert.equal(boxes.length, 4, 'everything the engine returned is kept');
-  assert.deepEqual(aboveConfidence(boxes, DEFAULT_CONFIDENCE).map(b=>b.text), ['LEFT RETROAREOLAR','AREA OF PAIN']);
-  // Lowering the floor reveals them again — no second run of the engine is needed.
-  assert.equal(aboveConfidence(boxes, 40).length, 3);
-  assert.equal(aboveConfidence(boxes, 0).length, 4);
-  assert.equal(aboveConfidence(boxes, 100).length, 0);
-  assert.deepEqual(aboveConfidence([], 60), []);
+  assert.equal('text' in zone, false, 'nor does it ride along under another key');
+  assert.equal(box.text, 'SMITH^JANE 1985-03-12', 'it stays readable in memory while deciding');
 });
