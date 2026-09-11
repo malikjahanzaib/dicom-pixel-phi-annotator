@@ -18,6 +18,7 @@
       <div class="menu-panel">
         <button id="backup">Save backup</button>
         <label class="filebtn">Restore backup<input id="restoreBackup" type="file" accept=".json,application/json"></label>
+        <label class="filebtn">Import annotations.json<input id="importPipeline" type="file" accept=".json,application/json"></label>
         <p class="note">Backups hold boxes and file hashes. Image data stays in this browser.</p>
         <button id="clearWorkspace" class="danger">Clear workspace</button>
       </div>
@@ -142,6 +143,11 @@
           <button id="dismissAllOcr">Dismiss all</button>
         </div>
         <div id="ocrList"></div>
+      </section>
+      <section id="layoutSection" hidden>
+        <div class="rail-title"><h2>Imported layouts</h2><span id="layoutCount" class="num">0</span></div>
+        <p class="caveat">Imported layouts sit outside the export until you promote them. Promoting records that you reviewed these zones — not that the layout covers everything.</p>
+        <div id="layoutList"></div>
       </section>
       <section>
         <div class="rail-title"><h2>Display</h2></div>

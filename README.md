@@ -1,6 +1,6 @@
 # Pixel Zone
 
-A local browser application for annotating burned-in text on DICOM and PNG images. It uses Cornerstone 5.8 for DICOM decoding and display, with a native-pixel rectangle editor. The original standalone `annotation_tool.html` remains available.
+A local browser application for annotating burned-in text on DICOM and PNG images. It uses Cornerstone 5.8 for DICOM decoding and display, with a native-pixel rectangle editor.
 
 ## Run on this Mac
 
@@ -38,7 +38,8 @@ All runtime scripts, workers, and compression codecs are bundled locally. Intern
 11. The library is grouped by combination. Each group is collapsible and reports its file count, the raster sizes it contains, and how many of its files carry zones; a group whose combo could not be parsed from the filename is pinned at the top as **Unassigned** with a badge, so nothing is silently annotated under the wrong combo. Sizes are labelled within a group whenever more than one is present, because a zone only means anything at one raster size. **Jump to combo** expands and scrolls to a group directly. Collapsed groups are remembered with the workspace. The list is windowed — only the visible rows exist in the DOM — so a batch of a thousand files stays interactive.
 12. Work through a batch using the library filter and search. The filter carries a live count in each of its own labels — **No boxes**, **Annotated**, **Needs combo ID**, **Source needed** — so those counts double as progress, and a view that empties means that part of the batch is done. **Needs combo ID** applies exactly the rule the export enforces, so it lists precisely the files blocking export. Search matches file name, relative path, and combo ID; the library count shows `shown of total` whenever a filter or search is narrowing it. Once the selected file has the right combo ID, **Apply combo N to N shown files** gives that ID to every file in the current view. The button always uses the selected file's *committed* ID rather than unsaved text in the field, reports how many files will change, warns which existing IDs it would overwrite, and asks for confirmation first. Combo IDs are not covered by undo.
 13. Images and annotations save automatically in this browser's IndexedDB and reopen next time. Use the **same browser/profile and exact URL** (`127.0.0.1:5173`); `localhost`, another port, or another profile has separate storage. Check the save indicator before closing. Storage denial/quota failure leaves the editor usable in memory and shows a message. A second tab uses session-only mode to avoid overwriting the first tab's saved work.
-14. **Save backup** downloads a versioned project JSON with file hashes, dimensions, notes, and frame-specific boxes. It does not include source image bytes. Restore it and reopen the original files to reconnect missing images. Keep backups if you clear browser data. **Clear workspace** removes both saved images and annotations from this browser, leaving your original files untouched.
+14. **Import annotations.json** loads a pipeline export back in for review. Because that file is a layout — no source files, no frame ownership — imported zones attach to a combo and raster size rather than to any file, and stay listed even when no matching image is open. They are **held out of the export until you promote them**, so a layout produced by someone else is never re-exported without a deliberate pass; promoting records that you reviewed those zones, not that the layout is complete. Where a matching image is open, imported zones draw dotted over it for review. Removing a zone withdraws the promotion, because what was confirmed is no longer what would be exported. Import is additive — re-importing merges new zones into an existing layout — and a promoted layout contributes to the export in the ordinary way, merging and de-duplicating into the same combo and size grouping an annotated file would.
+15. **Save backup** downloads a versioned project JSON with file hashes, dimensions, notes, and frame-specific boxes. It does not include source image bytes. Restore it and reopen the original files to reconnect missing images. Keep backups if you clear browser data. **Clear workspace** removes both saved images and annotations from this browser, leaving your original files untouched.
 
 ## Coordinates and pipeline export
 
@@ -65,7 +66,9 @@ DICOM reference dimensions come from Rows/Columns and are checked against decode
 }
 ```
 
-Pipeline export is a **layout union across all files and frames in each combo + size**, with exact duplicates removed. Preview renders exactly that union for the open image, which is the only way to see the layout the pipeline will really apply to it. It has no frame indices and is not a frame-by-frame redaction recipe. Use the project backup when frame ownership must be preserved. Every annotated file must have a combo ID before pipeline export is enabled. Empty combos/sizes are omitted.
+Pipeline export is a **layout union across all files and frames in each combo + size**, plus any imported layout that has been promoted, with exact duplicates removed. Preview renders exactly that union for the open image, which is the only way to see the layout the pipeline will really apply to it. It has no frame indices and is not a frame-by-frame redaction recipe. Use the project backup when frame ownership must be preserved. Every annotated file must have a combo ID before pipeline export is enabled. Empty combos/sizes are omitted.
+
+The export carries **no schema version field**, deliberately: it stays byte-compatible with the consumer reading it today. Adding one is a single change in `buildPipelineExport` — emit `schema_version: 1` beside `generated_at` — worth doing once the pipeline owner confirms the consumer tolerates an unknown key, with absence treated as version 1 so existing files keep loading.
 
 ## DICOM support and verification
 
@@ -79,6 +82,7 @@ Automated browser checks use generated files with no patient information:
 - The PS3.15 identifying filter: nested references inside sequences, per-filter counts, composition with search, image geometry and pixel data excluded, and the Burned In Annotation notice.
 - Keyboard editing: nudging with edge clamping, a burst of presses collapsing into one undo step, `Tab`/`Shift Tab` cycling with wrap, `Tab` falling through when there is nothing to cycle, and the `Esc` focus ladder.
 - Previous/Next and arrow keys skipping hidden files, the position counter inside a view, and an open file that is outside the view.
+- Pipeline import: a layout with no matching file listed and reviewable, held out of the export until promoted, merging with file zones without duplicating, and round-tripping to an equivalent file.
 - Templates: saved from a frame, priced before writing, refused on a raster-size mismatch with the reason given, applied cold to a file with no reference open, and exported in a schema-valid file.
 - Contact sheet: the merged layout sampled from a rendered thumbnail, lazy decoding, scope narrowing and widening, outlier flags, and click-through to the file.
 - OCR with the network blocked: the engine, its core and its language data loading from disk, line suggestions padded and clamped inside the raster, acceptance only on request, and no completeness claim in any status string.
@@ -114,6 +118,7 @@ Annotation boxes draw a dark rule beneath a light one so an edge stays legible o
 - `src/coordinates.js`: native-pixel geometry, zone identity, nudge clamping, selection cycling, the previewed per-combo layout, and the unchanged pipeline export schema.
 - `src/reuse.js`: pure planning and application of box copies across frames and same-size files.
 - `src/dicom.js`: Cornerstone local-file decoding and source-raster rendering.
+- `src/layouts.js`: imported pipeline layouts — validation, additive merging, and the promotion gate.
 - `src/templates.js`: named zone layouts — construction, size matching, ordering, and file validation.
 - `src/contact.js`: pure contact-sheet scope, outlier flags, thumbnail scaling, and grid windowing.
 - `src/ocr.js`: pure detection geometry — line extraction, padding, clamping, and conservative coverage.

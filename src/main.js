@@ -8,11 +8,12 @@ import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCo
 import { inspectFile } from './import.js';
 import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile, loadTemplates, putTemplate, deleteTemplate } from './storage.js';
 import { makeTemplate, templateFits, templateSize, sortTemplates, validateTemplateFile, templateFile } from './templates.js';
+import { validatePipelineFile, mergeImported, layoutKey } from './layouts.js';
 // Images stay in local File objects / IndexedDB. The local server serves app assets only.
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d'), viewport = $('viewport');
 const state = { images: [], index: -1, selected: -1, bitmap: null, view: {scale:1,x:0,y:0}, mode:'draw', space:false, drag:null, loadToken:0, dirty:false, preview:false, previewLayout:null,
-  collapsed:new Set(), rows:[], offsets:[0], window:null, suggestions:[], ocrKey:null, ocrBusy:false };
+  collapsed:new Set(), rows:[], offsets:[0], window:null, suggestions:[], ocrKey:null, ocrBusy:false, layouts:[] };
 let cssWidth=1, cssHeight=1;
 const current = () => state.images[state.index];
 const selected = () => current()?.zones[state.selected];
@@ -24,12 +25,15 @@ function toNative(clientX,clientY,bounded=true) {
   const p={x:((clientX-r.left)*cssWidth/r.width-v.x)/v.scale, y:((clientY-r.top)*cssHeight/r.height-v.y)/v.scale};
   return bounded && im ? {x:clamp(p.x,0,im.width), y:clamp(p.y,0,im.height)} : p;
 }
-function buildExport() { return buildPipelineExport(state.images); }
+function buildExport() { return buildPipelineExport(state.images, state.layouts); }
 function changed() { flushNudge(); state.dirty=true; rememberHistory(); persist(); $('exportStatus').textContent='Unexported changes.'; updateLibrary(); }
 function updateSummary() {
   const groups=new Map(); let count=0,unassigned=0;
   for(const im of state.images){const n=boxCount(im);if(!n)continue;count+=n;if(!im.combo)unassigned+=n;
     const key=`${im.combo ? 'Combo '+im.combo : 'Unassigned'} · ${im.width}×${im.height}`;groups.set(key,(groups.get(key)||0)+n);}
+  // Promoted imports are part of what will be exported even when no file carries them.
+  for(const layout of state.layouts){if(!layout.promoted)continue;count+=layout.zones.length;
+    const key=`Combo ${layout.combo} · ${layout.width}×${layout.height}`;groups.set(key,(groups.get(key)||0)+layout.zones.length);}
   $('summary').replaceChildren();
   for(const [label,n] of groups){const row=document.createElement('div');row.className='summary-row';const span=document.createElement('span');span.textContent=label;const value=document.createElement('b');value.textContent=`${n} zone${n===1?'':'s'}`;row.append(span,value);$('summary').append(row);}
   if(!count)$('summary').textContent='No zones';
@@ -90,6 +94,18 @@ function render() {
     ctx.lineWidth=1.5/v.scale;ctx.strokeStyle=on?'#fff':'#d6ab3f';ctx.strokeRect(z.x,z.y,z.width,z.height);
   });
   ctx.restore();
+  const imported=state.preview||state.hideZones?[]:matchingLayouts(im);
+  if(imported.length){
+    ctx.save();ctx.translate(v.x,v.y);ctx.scale(v.scale,v.scale);
+    ctx.beginPath();ctx.rect(0,0,im.width,im.height);ctx.clip();
+    for(const layout of imported)for(const zone of layout.zones){
+      ctx.setLineDash([2/v.scale,3/v.scale]);
+      ctx.lineWidth=3/v.scale;ctx.strokeStyle='rgba(0,0,0,.55)';ctx.strokeRect(zone.x,zone.y,zone.width,zone.height);
+      ctx.lineWidth=1.25/v.scale;ctx.strokeStyle=layout.promoted?'rgba(167,139,208,.45)':'#a78bd0';
+      ctx.strokeRect(zone.x,zone.y,zone.width,zone.height);
+    }
+    ctx.setLineDash([]);ctx.restore();
+  }
   if(state.suggestions.length&&!state.preview&&!state.hideZones){
     const zones=im.zones,dash=6/v.scale;
     ctx.save();ctx.translate(v.x,v.y);ctx.scale(v.scale,v.scale);
@@ -291,7 +307,7 @@ function persist(){
   if(!db){storageFailed(ownsWorkspace?'Not saving · storage unavailable':'Not saving · another tab is open');return;}
   $('saveStatus').textContent='Saving…';
   saveTimer=setTimeout(()=>{
-    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed]});
+    const snapshot=structuredClone({version:1,images:state.images.map(imageRecord),activeId:current()?.id,collapsed:[...state.collapsed],layouts:state.layouts});
     saving=saving.then(()=>saveSession(db,snapshot)).then(()=>{
       if(rev===revision&&!persistenceFailed){state.dirty=false;$('saveStatus').textContent='Saved locally';}
     }).catch(()=>storageFailed('Save failed · download a backup'));
@@ -476,7 +492,7 @@ function previewHint(){
 }
 function computePreview(){
   const im=current();if(!im)return null;
-  const own=sourceZones(im,im.frameIndex),union=pipelineLayout(state.images,im.combo,im.width,im.height);
+  const own=sourceZones(im,im.frameIndex),union=pipelineLayout(state.images,im.combo,im.width,im.height,state.layouts);
   if(!union)return {zones:own,scope:'frame',extra:0};
   const mine=new Set(own.map(zoneKey));
   return {zones:union,scope:'union',extra:union.reduce((n,z)=>n+(mine.has(zoneKey(z))?0:1),0)};
@@ -697,7 +713,7 @@ const THUMB_W=142,THUMB_H=96,CELL_W=156,CELL_H=136,THUMB_CACHE_MAX=400;
 const thumbs=new Map();
 let contactEntries=[],contactPass=0,contactKey=null,thumbVersion=0;
 function thumbLayout(im){
-  const union=pipelineLayout(state.images,im.combo,im.width,im.height);
+  const union=pipelineLayout(state.images,im.combo,im.width,im.height,state.layouts);
   return union??Object.values(im.frames).flat().map(z=>exportZone(z,im)).filter(Boolean);
 }
 async function buildThumb(im){
@@ -897,6 +913,66 @@ $('importTemplates').onchange=async e=>{
     $('templatePlan').textContent=`Imported ${added.length} template${added.length===1?'':'s'}${incoming.length-added.length?` · ${incoming.length-added.length} already present`:''}.`;
   }catch(error){$('templatePlan').textContent=`Templates not imported: ${error.message}`;}
 };
+// Imported pipeline layouts. They carry no source file and no frame ownership, so they
+// stand on their own; they are drawn over a matching image for review and stay out of the
+// export until the operator promotes them.
+// Which layouts the operator has expanded, so acting on one does not collapse the panel
+// underneath them when the list re-renders.
+const openLayouts=new Set();
+const matchingLayouts=im=>im?state.layouts.filter(l=>l.combo===(im.combo||'')&&l.width===im.width&&l.height===im.height):[];
+function updateLayoutPanel(){
+  const list=$('layoutList');
+  $('layoutSection').hidden=!state.layouts.length;
+  $('layoutCount').textContent=String(state.layouts.length);
+  list.replaceChildren();
+  for(const layout of state.layouts){
+    const key=layoutKey(layout);
+    const row=document.createElement('details');row.className='layout'+(layout.promoted?' promoted':'');
+    row.open=openLayouts.has(key);
+    row.addEventListener('toggle',()=>{if(row.open)openLayouts.add(key);else openLayouts.delete(key);});
+    const summary=document.createElement('summary');
+    const label=document.createElement('b');label.textContent=`Combo ${layout.combo} · ${layout.width}×${layout.height}`;
+    const count=document.createElement('span');count.className='num';
+    count.textContent=`${layout.zones.length} zone${layout.zones.length===1?'':'s'}`;
+    const badge=document.createElement('em');badge.className='state';badge.textContent=layout.promoted?'in export':'held';
+    summary.append(label,count,badge);
+    const body=document.createElement('div');body.className='body';
+    for(const zone of layout.zones){
+      const line=document.createElement('div');line.className='zone-line';
+      const text=document.createElement('span');
+      text.textContent=`x=${zone.x}, y=${zone.y}, w=${zone.width}, h=${zone.height}${zone.note?' · '+zone.note:''}`;
+      const drop=document.createElement('button');drop.textContent='×';drop.setAttribute('aria-label','Remove this zone');
+      drop.onclick=()=>{
+        layout.zones=layout.zones.filter(z=>z!==zone);
+        if(!layout.zones.length)state.layouts=state.layouts.filter(l=>l!==layout);
+        else layout.promoted=false;   // what was reviewed is no longer what would export
+        layoutsChanged();
+      };
+      line.append(text,drop);body.append(line);
+    }
+    const actions=document.createElement('div');actions.className='btn-row';
+    const promote=document.createElement('button');
+    promote.textContent=layout.promoted?'Hold back':'Promote to export';
+    promote.onclick=()=>{layout.promoted=!layout.promoted;layoutsChanged();};
+    const discard=document.createElement('button');discard.className='danger';discard.textContent='Discard';
+    discard.onclick=()=>{
+      if(!confirm(`Discard the imported layout for combo ${layout.combo} at ${layout.width}×${layout.height}? Zones already on files are unaffected.`))return;
+      state.layouts=state.layouts.filter(l=>l!==layout);layoutsChanged();
+    };
+    actions.append(promote,discard);body.append(actions);
+    row.append(summary,body);list.append(row);
+  }
+}
+function layoutsChanged(){state.dirty=true;persist();updateLayoutPanel();updateSummary();render();}
+$('importPipeline').onchange=async e=>{
+  const file=e.target.files[0];e.target.value='';if(!file)return;
+  try{
+    const incoming=validatePipelineFile(JSON.parse(await file.text()));
+    const {layouts,added,merged}=mergeImported(state.layouts,incoming);
+    state.layouts=layouts;layoutsChanged();
+    $('message').textContent=`Imported ${added} layout${added===1?'':'s'}${merged?` · ${merged} zone${merged===1?'':'s'} merged`:''}. Nothing is exported until you promote it.`;
+  }catch(error){$('message').textContent=`Layout not imported: ${error.message}`;}
+};
 function downloadJSON(value,name){const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 $('backup').onclick=()=>{downloadJSON({format:'pixel-zone-project',version:1,generated_at:new Date().toISOString(),images:state.images.map(imageRecord)},'pixel-zone-annotations.json');};
 $('restoreBackup').onchange=async e=>{
@@ -919,7 +995,7 @@ $('clearWorkspace').onclick=async()=>{
   if(importing)return;if(!confirm('Delete every imported image and annotation from this browser? Source files and saved templates are untouched.'))return;
   cancelDrag();clearTimeout(saveTimer);revision++;await saving;
   try{if(db)await clearSession(db);}catch{storageFailed('Could not clear browser storage.');return;}
-  state.images=[];resetView();persistenceFailed=false;persist();$('message').textContent='Workspace cleared.';
+  state.images=[];state.layouts=[];resetView();updateLayoutPanel();persistenceFailed=false;persist();$('message').textContent='Workspace cleared.';
 };
 async function initialize(){
   for(const id of ['files','folder','restoreBackup'])$(id).disabled=true;
@@ -934,12 +1010,20 @@ async function initialize(){
     db=await openDatabase();
     const saved=await loadSession(db);
     if(saved?.version===1){for(const record of saved.images)state.images.push(hydrate(record,await loadFile(db,record.id)));state.index=-1;
-      if(Array.isArray(saved.collapsed))state.collapsed=new Set(saved.collapsed.filter(key=>typeof key==='string'));}
+      if(Array.isArray(saved.collapsed))state.collapsed=new Set(saved.collapsed.filter(key=>typeof key==='string'));
+      // Re-validated on the way back in, so a hand-edited store cannot reintroduce a zone
+      // that never passed the import checks.
+      if(Array.isArray(saved.layouts))try{
+        const promoted=new Set(saved.layouts.filter(l=>l?.promoted).map(layoutKey));
+        state.layouts=validatePipelineFile({annotations:Object.fromEntries(saved.layouts.map(l=>
+          [l.combo,{[`${l.width}x${l.height}`]:{ref_width:l.width,ref_height:l.height,zones:l.zones}}]))})
+          .map(l=>({...l,promoted:promoted.has(layoutKey(l))}));
+      }catch{state.layouts=[];}}
     if(!ownsWorkspace){db.close();db=null;persistenceFailed=true;}
     ready=true;$('saveStatus').textContent=ownsWorkspace?'Saved locally':'Not saving · another tab is open';
     if(state.images.length)await showImage(Math.max(0,state.images.findIndex(im=>im.id===saved.activeId)));
   }catch{db=null;ready=true;storageFailed('Not saving · storage unavailable');}
   for(const id of ['files','folder','restoreBackup'])$(id).disabled=false;
-  updateLibrary();updateImageControls();updateZones();
+  updateLibrary();updateImageControls();updateZones();updateLayoutPanel();
 }
 initialize();

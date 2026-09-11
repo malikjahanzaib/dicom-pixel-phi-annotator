@@ -402,6 +402,41 @@ try{
  assert.deepEqual(Object.keys(exported.templates[0]).sort(),['combo','createdAt','height','id','name','width','zones']);
  await page.locator('#closeTemplates').click();
  console.log('PASS zone templates: saved, priced, refused on a size mismatch, applied cold, and exported.');
+ // Importing a prior annotations.json: standalone layouts, held out of the export until
+ // promoted, and round-tripping back to an equivalent file.
+ const priorPath=path.resolve('.test-output/prior-annotations.json');
+ await fs.writeFile(priorPath,JSON.stringify({generated_at:'2026-01-01T00:00:00.000Z',annotations:{
+   '16':{'640x480':{ref_width:640,ref_height:480,zones:[{x:11,y:12,width:300,height:22,note:'prior header'}]}},
+   '99':{'800x600':{ref_width:800,ref_height:600,zones:[{x:0,y:0,width:80,height:16,note:'prior corner'}]}}}}));
+ const zonesBefore=Number((await page.locator('#total').textContent()).match(/\d+/)[0]);
+ await page.locator('#workspaceMenu').evaluate(e=>e.open=true);
+ await page.locator('#importPipeline').setInputFiles(priorPath);
+ await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Imported 2 layouts'));
+ assert.match(await page.locator('#message').textContent(),/Nothing is exported until you promote it\./);
+ assert.equal(await page.locator('#layoutList .layout').count(),2);
+ // Combo 99 has no file in the library at all and is still listed and reviewable.
+ assert.match(await page.locator('#layoutList .layout').filter({hasText:'Combo 99'}).textContent(),/800×600/);
+ assert.equal(await page.locator('#layoutList .layout .state').first().textContent(),'held');
+ // Held back: the export total has not moved.
+ assert.equal(Number((await page.locator('#total').textContent()).match(/\d+/)[0]),zonesBefore);
+ await page.screenshot({path:'.test-output/imported.png'});
+ // Promoting is what admits a layout to the export.
+ await page.locator('#layoutList .layout').filter({hasText:'Combo 99'}).locator('summary').click();
+ await page.locator('#layoutList .layout').filter({hasText:'Combo 99'}).getByText('Promote to export').click();
+ assert.equal(Number((await page.locator('#total').textContent()).match(/\d+/)[0]),zonesBefore+1);
+ assert.match(await page.locator('#summary').textContent(),/Combo 99 · 800×600/);
+ const withImport=await exportJson('#export');
+ // Round trip: the promoted layout re-exports in the frozen schema, byte-shaped as it
+ // arrived, alongside the zones that came from real files.
+ assert.deepEqual(withImport.annotations['99'],{'800x600':{ref_width:800,ref_height:600,
+   zones:[{x:0,y:0,width:80,height:16,note:'prior corner'}]}});
+ assert.equal('16' in withImport.annotations,true);
+ assert.deepEqual(Object.keys(withImport),['generated_at','annotations']);
+ // Removing a zone withdraws the confirmation, because what was reviewed changed.
+ await page.locator('#layoutList .layout').filter({hasText:'Combo 99'}).locator('.zone-line button').first().click();
+ assert.equal(await page.locator('#layoutList .layout').count(),1,'an emptied layout is dropped');
+ assert.equal(Number((await page.locator('#total').textContent()).match(/\d+/)[0]),zonesBefore);
+ console.log('PASS annotations.json import: standalone layouts, held out of the export until promoted, and round-tripped.');
  await page.setViewportSize({width:760,height:1000}); await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
  await page.setViewportSize({width:600,height:900});await noOverflow('600px');await page.setViewportSize({width:1500,height:1100});
 
