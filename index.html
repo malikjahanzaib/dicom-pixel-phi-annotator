@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Pixel Zone — DICOM Workspace</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<svg class="icon-defs" aria-hidden="true"><defs>
+  <symbol id="i-box" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1"/><path d="M3 7V3h4m10 0h4v4M3 17v4h4m10 0h4v-4"/></symbol>
+  <symbol id="i-files" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zm0 0v6h6M8 13h8m-8 4h5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  <symbol id="i-pan" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/></symbol>
+  <symbol id="i-level" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-tags" viewBox="0 0 24 24"><path d="m8 5-6 7 6 7m8-14 6 7-6 7M14 3l-4 18"/></symbol>
+  <symbol id="i-redact" viewBox="0 0 24 24"><path d="M4 6h7M4 18h10"/><rect x="4" y="10" width="16" height="4.5" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 5V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h1"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h13l3 3v13H3V4zm2 0v6h10V4M7 20v-7h10v7"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+</defs></svg>
+<header class="app-header">
+  <div class="brand"><span class="brand-mark"><svg class="icon"><use href="#i-box"/></svg></span><div><h1>Pixel Zone</h1><span class="subtitle">Annotation workspace</span></div></div>
+  <div class="header-right"><div class="save-indicator"><svg class="icon"><use href="#i-save"/></svg><span id="saveStatus" role="status">Opening local workspace…</span></div><span class="privacy">Stored on this device</span>
+    <details class="workspace-menu" id="workspaceMenu"><summary>Workspace <span aria-hidden="true">⌄</span></summary><div class="menu-content"><h2>Workspace data</h2><button id="backup"><svg class="icon"><use href="#i-arrow"/></svg>Save annotation backup</button><label class="file-button">Restore annotation backup<input id="restoreBackup" type="file" accept=".json,application/json"></label><p class="hint">Backups include boxes and file references. Images stay in this browser.</p><button id="clearWorkspace" class="danger">Clear local workspace</button></div></details>
+  </div>
+</header>
+<main class="app">
+  <aside class="left-rail" aria-label="Image library">
+    <div class="library-heading"><div class="section-heading"><h2>Library</h2><span class="count-badge" id="libraryCount">0 files</span></div><div class="loaders"><label class="file-button primary"><svg class="icon"><use href="#i-files"/></svg>Open files<input id="files" type="file" accept=".dcm,.dicom,.ima,.png,application/dicom,image/png" multiple></label><label class="file-button">Folder<input id="folder" type="file" webkitdirectory multiple></label></div><p class="hint">DICOM & PNG · or drag files here</p><div class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="search" type="search" aria-label="Find a file" placeholder="Find a file, path, or combo…"></div><select id="libraryFilter" aria-label="Filter the library"><option value="all">All files</option><option value="unannotated">No boxes</option><option value="annotated">Annotated</option><option value="needs-combo">Needs combo ID</option><option value="source-needed">Source needed</option></select><div id="message" role="status" aria-live="polite"></div></div>
+    <div id="library" class="library-list"></div>
+    <div class="library-footer"><div class="navigation"><button id="previous" disabled aria-label="Previous file">← Previous</button><span id="counter">0 of 0</span><button id="next" disabled aria-label="Next file">Next →</button></div><button id="removeImage" class="quiet danger" disabled>Remove selected file</button><select id="imageSelect" aria-label="Choose image" hidden disabled></select><span id="filename" class="sr-only">No image loaded</span></div>
+  </aside>
+  <div class="workspace">
+    <div class="image-strip"><div class="image-identity"><span class="eyebrow">CURRENT IMAGE</span><h2 id="viewTitle">No image selected</h2><span id="viewSubtitle" class="muted">Open files to begin</span><span id="metadata" class="sr-only" aria-live="polite">No image loaded</span></div><button id="openTags" class="tags-button" disabled><svg class="icon"><use href="#i-tags"/></svg>DICOM tags</button></div>
+    <div id="warning" role="status" hidden></div>
+    <div class="toolbar"><div class="tool-cluster"><div class="tool-group" role="group" aria-label="Annotation tools"><button id="drawMode" class="tool" aria-pressed="true" title="Draw and select boxes (D)"><svg class="icon"><use href="#i-box"/></svg>Draw box</button><button id="panMode" class="tool" aria-pressed="false" title="Pan (P), or hold Space"><svg class="icon"><use href="#i-pan"/></svg>Pan</button><button id="windowMode" class="tool" aria-pressed="false" disabled title="Drag to change contrast and brightness"><svg class="icon"><use href="#i-level"/></svg>Window / level</button></div><button id="preview" class="verify-button" aria-pressed="false" disabled title="Fill every pipeline zone opaque to confirm coverage (R)"><svg class="icon"><use href="#i-redact"/></svg>Redaction preview</button></div><div class="zoom-group" role="group" aria-label="Zoom controls"><button id="zoomOut" aria-label="Zoom out">−</button><span id="zoomValue">—</span><button id="zoomIn" aria-label="Zoom in">+</button><button id="actual" title="One native pixel per display pixel">100%</button><button id="fit" title="Fit image to canvas">Fit</button></div></div>
+    <div id="viewport"><div id="loading" role="status" hidden></div><canvas id="canvas" tabindex="0" aria-label="Annotation canvas. Drag to draw a box. Select to move or resize."></canvas><div id="empty"><div class="empty-icon"><svg><use href="#i-box"/></svg></div><h2>A clear view. Precise annotations.</h2><p>Open a DICOM or PNG to draw your first box.</p><button id="emptyOpen" class="primary"><svg class="icon"><use href="#i-files"/></svg>Open images</button><span class="hint">Images and annotations stay on this device.</span></div></div>
+    <div class="frame-strip"><div class="group"><button id="framePrevious" disabled aria-label="Previous frame">‹</button><span id="frameLabel">Frame —</span><button id="frameNext" disabled aria-label="Next frame">›</button></div><input id="frameSlider" type="range" min="0" max="0" value="0" disabled aria-label="DICOM frame"><button id="copyPreviousFrame" class="frame-action" disabled><svg class="icon"><use href="#i-copy"/></svg>From previous frame</button><span class="frame-note">Boxes are saved per frame</span></div>
+    <div class="mode-hint"><span id="toolHint">Open an image to start annotating.</span><span class="shortcut-hint"><kbd>Space</kbd> to pan · scroll to zoom</span></div>
+    <div class="statusbar"><span>Cursor <b id="cursorReadout">—</b></span><span>Box <b id="boxReadout">—</b></span><span class="pixel-badge">Native pixels</span></div>
+  </div>
+  <aside class="right-rail" aria-label="Annotation inspector">
+    <div class="inspector-scroll">
+      <section class="annotation-section"><div class="section-heading"><h2>Annotations</h2><span class="count-badge" id="zoneCount">(0)</span></div><div class="annotation-actions"><div class="group"><button id="undo" class="quiet" disabled title="Undo (Ctrl/Cmd Z)">↶ Undo</button><button id="redo" class="quiet" disabled title="Redo (Ctrl/Cmd Shift Z)">↷ Redo</button></div><button id="openReuse" class="quiet" disabled title="Draw a box on this frame first.">⧉ Copy to…</button><button id="hideZones" class="quiet" aria-pressed="false">Hide boxes</button></div><div id="zones"></div><div id="editor" hidden><div class="editor-heading"><h3>Position & size</h3><span class="muted">px</span></div><div class="coords"><label>X<input id="x" type="number" step="1" min="0"></label><label>Y<input id="y" type="number" step="1" min="0"></label><label>Width<input id="width" type="number" step="1" min="1"></label><label>Height<input id="height" type="number" step="1" min="1"></label></div><label id="noteLabel" for="note">Label / note</label><textarea id="note" rows="2" placeholder="e.g. Patient name or DOB"></textarea><button id="deleteSelected" class="quiet danger">Delete selected box</button></div></section>
+      <section><div class="section-heading"><h2>Image display</h2><svg class="icon muted"><use href="#i-level"/></svg></div><div class="coords"><label>Window width<input id="windowWidth" type="number" min="1" step="1" disabled></label><label>Window center<input id="windowCenter" type="number" step="1" disabled></label></div><div class="group display-actions"><button id="invert" aria-pressed="false" disabled>Invert</button><button id="resetDisplay" class="quiet" disabled>Reset display</button></div><p class="hint">Changes the view, not the source image.</p></section>
+      <section class="help-section"><details><summary>Shortcuts & drawing help</summary><p>Drag empty space to draw. Click a box to select it; drag its body to move, or its handles to resize. Hold <kbd>Shift</kbd> to draw overlapping boxes.</p><p><kbd>D</kbd> Draw · <kbd>P</kbd> Pan · <kbd>C</kbd> Copy previous frame’s boxes<br><kbd>R</kbd> Redaction preview<br><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> Nudge the selected box 1 px · <kbd>Shift</kbd> 10 px<br><kbd>←</kbd> <kbd>→</kbd> With nothing selected, previous / next file in the view<br><kbd>Tab</kbd> Next box while the canvas has focus · <kbd>Shift Tab</kbd> back<br><kbd>Delete</kbd> Delete selected box<br><kbd>Esc</kbd> Cancel, then deselect, then release the canvas<br><kbd>⌘/Ctrl Z</kbd> Undo</p><p>Coordinates always refer to original image pixels, measured from the top-left.</p></details></section>
+    </div>
+    <section class="export-section"><div class="section-heading"><h2>Pipeline export</h2><span id="total" class="muted">· 0 zones</span></div><label class="combo-label" for="comboId">Combo ID <span class="muted">· selected file</span></label><input id="comboId" type="text" inputmode="numeric" pattern="[0-9]+" placeholder="Enter combo ID, e.g. 16" disabled><button id="applyComboToShown" class="quiet" hidden disabled title="Narrow the library with the search box or a filter, then give every shown file this combo ID."></button><div id="summary"></div><p class="hint" id="exportStatus" role="status">Draw a box to enable export.</p><button id="export" class="primary" disabled><svg class="icon"><use href="#i-arrow"/></svg>Export pipeline JSON</button><details class="export-help"><summary>What is exported?</summary><p>Native-pixel boxes grouped by combo and image size. Boxes from all samples and frames are merged; exact duplicates are removed. Each annotated file needs a combo ID. Use Workspace → Save annotation backup to keep frame ownership.</p><p>Turn on <b>Redaction preview</b> to fill that merged layout opaque over the open image and confirm it covers the burned-in text.</p></details></section>
+  </aside>
+</main>
+<dialog id="reuseDialog" class="tag-dialog reuse-dialog" aria-labelledby="reuseTitle">
+  <div class="tag-header"><div><span class="eyebrow">REUSE BOXES</span><h2 id="reuseTitle">Copy boxes to other frames</h2><p id="reuseSource"></p></div><button id="closeReuse" class="icon-button" aria-label="Close copy boxes">×</button></div>
+  <div class="reuse-body">
+    <fieldset><legend>Copy to</legend>
+      <label><input type="radio" name="reuseScope" value="frames" checked><span>Every other frame of this file <b id="reuseFramesHint" class="muted"></b></span></label>
+      <label><input type="radio" name="reuseScope" value="files"><span>The open frame of every same-size file <b id="reuseFilesHint" class="muted"></b></span></label>
+      <label><input type="radio" name="reuseScope" value="files-all-frames"><span>Every frame of every same-size file <b id="reuseAllHint" class="muted"></b></span></label>
+      <label class="reuse-nested"><input id="reuseSameCombo" type="checkbox"><span>Only files sharing this file’s combo ID</span></label>
+    </fieldset>
+    <fieldset><legend>Where the destination already has boxes</legend>
+      <label><input type="radio" name="reuseMode" value="merge" checked><span>Add the missing boxes and keep existing ones</span></label>
+      <label><input type="radio" name="reuseMode" value="replace"><span>Replace the destination boxes</span></label>
+    </fieldset>
+    <p class="hint">Boxes are native-pixel coordinates, so only rasters measuring exactly <b id="reuseSize">—</b> are eligible — other sizes are skipped rather than rescaled. Source images are never changed, and each destination frame can be undone on its own.</p>
+  </div>
+  <div class="tag-footer"><span id="reusePlan" role="status">—</span><div class="group"><button id="cancelReuse" class="quiet">Cancel</button><button id="applyReuse" class="primary" disabled>Copy boxes</button></div></div>
+</dialog>
+<dialog id="tagDialog" class="tag-dialog" aria-labelledby="tagTitle">
+  <div class="tag-header"><div><span class="eyebrow">SOURCE METADATA</span><h2 id="tagTitle">DICOM tags</h2><p id="tagFilename"></p></div><button id="closeTags" class="icon-button" aria-label="Close DICOM tags">×</button></div>
+  <div class="tag-controls"><label class="search-field"><svg class="icon"><use href="#i-search"/></svg><input id="tagSearch" type="search" placeholder="Search tag, name, or value…" aria-label="Search DICOM tags"></label><select id="tagFilter" aria-label="Filter DICOM tags"><option value="all">All tags</option><option value="phi">Identifying (PS3.15)</option><option value="standard">Standard tags</option><option value="private">Private tags</option><option value="sequences">Sequences</option></select></div>
+  <div class="tag-summary"><span id="tagCount" role="status" aria-live="polite">Reading tags…</span><span>Read only · local file</span></div>
+  <div id="tagBurnedIn" class="tag-flag" role="status" hidden></div>
+  <div id="tagPhiNote" class="tag-info" hidden>Attributes the DICOM PS3.15 Annex E Basic Confidentiality Profile treats as identifying. Read the values to learn which strings may also be burned into the pixels. This panel only reads the file — it never removes or rewrites a tag — and a tag missing from this list is not evidence that the file carries no PHI. Private tags are unvetted and have their own filter.</div>
+  <div id="tagNotice" class="tag-notice" role="status" hidden></div>
+  <div class="tag-table-wrap"><table class="tag-table"><thead><tr><th scope="col">Tag / VR</th><th scope="col">Name</th><th scope="col">Value</th></tr></thead><tbody id="tagRows"></tbody></table><div id="tagEmpty" class="tag-empty" hidden>No matching tags. Try another name, value, or tag number.</div></div>
+  <div class="tag-footer"><span>Includes nested sequence items. Binary values show a summary.</span><div class="group"><button id="tagPrevious" aria-label="Previous page of tags" disabled>←</button><span id="tagPage">1 / 1</span><button id="tagNext" aria-label="Next page of tags" disabled>→</button></div></div>
+</dialog>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
