@@ -2,6 +2,7 @@
 import { clamp, rectangleBetween, exportZone, parseFilename, buildPipelineExport, pipelineLayout, zoneKey, nudgeZone, cycleIndex, imageRecord, hydrate } from './coordinates.js';
 import { openTagViewer } from './tag-viewer.js';
 import { sourceZones, reuseTargets, planReuse, applyPlan, describePlan } from './reuse.js';
+import { extractLines, suggestionBoxes, coverage, toZone } from './ocr.js';
 import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCounts, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment } from './library.js';
 import { inspectFile } from './import.js';
 import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile } from './storage.js';
@@ -9,7 +10,7 @@ import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSessio
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d'), viewport = $('viewport');
 const state = { images: [], index: -1, selected: -1, bitmap: null, view: {scale:1,x:0,y:0}, mode:'draw', space:false, drag:null, loadToken:0, dirty:false, preview:false, previewLayout:null,
-  collapsed:new Set(), rows:[], offsets:[0], window:null };
+  collapsed:new Set(), rows:[], offsets:[0], window:null, suggestions:[], ocrKey:null, ocrBusy:false };
 let cssWidth=1, cssHeight=1;
 const current = () => state.images[state.index];
 const selected = () => current()?.zones[state.selected];
@@ -56,7 +57,7 @@ function updateZones() {
     choose.onclick=()=>{state.selected=i;updateZones();render();};
     const remove=document.createElement('button');remove.className='remove danger';remove.textContent='×';remove.setAttribute('aria-label',`Delete zone ${i+1}`);remove.onclick=()=>deleteZone(i);
     row.append(choose,remove);$('zones').append(row);
-  });invalidateCount(current());updateEditor();updateSummary();updateReuseButtons();
+  });invalidateCount(current());updateEditor();updateSummary();updateReuseButtons();if(state.suggestions.length)updateOcrPanel();
 }
 function deleteZone(i=state.selected) {
   if (!current() || i<0 || !current().zones[i]) return;
@@ -87,6 +88,19 @@ function render() {
     ctx.lineWidth=1.5/v.scale;ctx.strokeStyle=on?'#fff':'#d6ab3f';ctx.strokeRect(z.x,z.y,z.width,z.height);
   });
   ctx.restore();
+  if(state.suggestions.length&&!state.preview&&!state.hideZones){
+    const zones=im.zones,dash=6/v.scale;
+    ctx.save();ctx.translate(v.x,v.y);ctx.scale(v.scale,v.scale);
+    ctx.beginPath();ctx.rect(0,0,im.width,im.height);ctx.clip();
+    for(const box of state.suggestions){
+      const open=!coveredBySomeZone(box,zones);
+      ctx.setLineDash([dash,dash]);
+      ctx.lineWidth=3/v.scale;ctx.strokeStyle='rgba(0,0,0,.55)';ctx.strokeRect(box.x,box.y,box.width,box.height);
+      ctx.lineWidth=1.25/v.scale;ctx.strokeStyle=open?'#6fc3d4':'rgba(111,195,212,.35)';
+      ctx.strokeRect(box.x,box.y,box.width,box.height);
+    }
+    ctx.setLineDash([]);ctx.restore();
+  }
   const z=selected();if(z&&!state.hideZones&&!state.preview){
     ctx.fillStyle='#fff';ctx.strokeStyle='rgba(0,0,0,.75)';ctx.lineWidth=1;
     for(const [,x,y] of handles(z)){const px=Math.round(v.x+x*v.scale)-3.5,py=Math.round(v.y+y*v.scale)-3.5;ctx.fillRect(px,py,7,7);ctx.strokeRect(px,py,7,7);}}
@@ -101,7 +115,7 @@ function zoom(factor,cx=cssWidth/2,cy=cssHeight/2,absolute=false) {
 new ResizeObserver(()=>{const r=viewport.getBoundingClientRect(),oldW=cssWidth,oldH=cssHeight;cssWidth=r.width;cssHeight=r.height;const dpr=window.devicePixelRatio||1;canvas.width=Math.round(cssWidth*dpr);canvas.height=Math.round(cssHeight*dpr);state.view.x+=(cssWidth-oldW)/2;state.view.y+=(cssHeight-oldH)/2;render();}).observe(viewport);
 async function showImage(index, frame, preserveView=false) {
   if(index<0||index>=state.images.length)return; cancelDrag();flushNudge();
-  const token=++state.loadToken;state.index=index;state.selected=-1;state.bitmap?.close?.();state.bitmap=null;state.decoded=null;
+  const token=++state.loadToken;state.index=index;state.selected=-1;state.bitmap?.close?.();state.bitmap=null;state.decoded=null;clearSuggestions();
   const im=current();if(frame!==undefined)im.frameIndex=clamp(frame,0,im.frameCount-1);
   ensureHistory();$('filename').textContent=im.name;$('metadata').textContent=`${im.kind} · Loading…`;
   $('warning').hidden=true;$('cursorReadout').textContent='—';$('empty').hidden=true;
@@ -180,6 +194,10 @@ canvas.addEventListener('pointerdown',e=>{
   if(state.mode==='window'&&state.decoded&&!state.decoded.color&&!state.space&&e.button===0)state.drag={...common,type:'window',display:{...im.display},ww:Number($('windowWidth').value),wc:Number($('windowCenter').value)};
   else if(state.mode==='pan'||state.space||e.button===1)state.drag={...common,type:'pan',view:{...state.view}};
   else {
+    if(!e.shiftKey&&state.suggestions.length){
+      const hit=[...state.suggestions].reverse().find(b=>raw.x>=b.x&&raw.x<=b.x+b.width&&raw.y>=b.y&&raw.y<=b.y+b.height);
+      if(hit){acceptSuggestion(hit);return;}
+    }
     const blind=e.shiftKey||state.hideZones||state.preview;
     const handle=blind?null:hitHandle(raw),hit=blind?-1:hitZone(raw);
     if(handle)state.drag={...common,type:'resize',handle,original:{...selected()}};
@@ -246,6 +264,7 @@ document.addEventListener('keydown',e=>{
   if(e.key.toLowerCase()==='d')setMode('draw');if(e.key.toLowerCase()==='p')setMode('pan');
   if(e.key.toLowerCase()==='c'){e.preventDefault();copyPreviousFrame();}
   if(e.key.toLowerCase()==='r'){e.preventDefault();togglePreview();}
+  if(e.key.toLowerCase()==='t'){e.preventDefault();detectText();}
   if(e.key==='+'||e.key==='='){e.preventDefault();zoom(1.25);}if(e.key==='-'){e.preventDefault();zoom(.8);}
 });
 document.addEventListener('keyup',e=>{if(e.code==='Space'){state.space=false;canvas.style.cursor=state.mode==='pan'?'grab':'crosshair';}});
@@ -466,6 +485,77 @@ function togglePreview(){
   refreshPreview();updateImageControls();render();
 }
 $('preview').onclick=togglePreview;
+// Detection runs against the native raster, so a box the engine reports is already in the
+// coordinate space every zone uses — no display transform is involved at any point.
+function nativeRaster(im){
+  const canvas=document.createElement('canvas');canvas.width=im.width;canvas.height=im.height;
+  canvas.getContext('2d').drawImage(state.bitmap,0,0,im.width,im.height);
+  return canvas;
+}
+const coveredBySomeZone=(box,zones)=>zones.some(z=>box.x>=z.x&&box.y>=z.y&&box.x+box.width<=z.x+z.width&&box.y+box.height<=z.y+z.height);
+function clearSuggestions(){state.suggestions=[];state.ocrKey=null;updateOcrPanel();}
+async function detectText(){
+  const im=current();
+  if(!im||!state.bitmap||state.ocrBusy)return;
+  state.ocrBusy=true;$('detectText').disabled=true;
+  updateOcrPanel('Reading the image…');
+  const token=state.loadToken,frame=im.frameIndex;
+  try{
+    const {recognize}=await import('./ocr-engine.js');
+    const data=await recognize(nativeRaster(im));
+    if(token!==state.loadToken||im.frameIndex!==frame)return;   // the operator moved on
+    state.suggestions=suggestionBoxes(extractLines(data),im);
+    state.ocrKey=`${im.id}:${frame}`;
+    updateOcrPanel();render();
+  }catch(error){
+    state.suggestions=[];state.ocrKey=null;
+    updateOcrPanel(`Could not run detection: ${error?.message||'the local OCR engine did not start.'}`);
+  }finally{state.ocrBusy=false;updateImageControls();}
+}
+function acceptSuggestion(box){
+  const im=current();if(!im)return;
+  ensureHistory();im.zones.push(toZone(box));
+  state.suggestions=state.suggestions.filter(s=>s!==box);
+  state.selected=im.zones.length-1;
+  changed();updateOcrPanel();updateZones();render();
+}
+function dismissSuggestion(box){state.suggestions=state.suggestions.filter(s=>s!==box);updateOcrPanel();render();}
+// Wording is load-bearing: it reports what was found and what is uncovered, and never
+// characterises the image. "No text detected" is not "no text present".
+const ocrStatusText=()=>{
+  const report=coverage(state.suggestions,current()?.zones||[]);
+  return report.detected
+    ?`${report.detected} text region${report.detected===1?'':'s'} detected · ${report.uncovered} not covered by a zone`
+    :'No text regions detected on this frame. That is not a finding of "no text".';
+};
+function updateOcrPanel(status){
+  const boxes=state.suggestions,im=current();
+  $('ocrSection').hidden=!boxes.length&&status===undefined&&!state.ocrBusy;
+  $('ocrCount').textContent=String(boxes.length);
+  $('ocrStatus').textContent=status??ocrStatusText();
+  $('acceptAllOcr').disabled=!boxes.length;$('dismissAllOcr').disabled=!boxes.length;
+  $('ocrList').replaceChildren();
+  for(const box of boxes){
+    const row=document.createElement('div');row.className='ocr-row'+(coveredBySomeZone(box,im?.zones||[])?' covered':'');
+    const accept=document.createElement('button');accept.className='ocr-accept';
+    const text=document.createElement('strong');text.textContent=box.note;
+    const meta=document.createElement('small');meta.textContent=`${box.x},${box.y} · ${box.width}×${box.height} · ${box.confidence}%`;
+    accept.append(text,meta);accept.title='Accept as a zone';accept.onclick=()=>acceptSuggestion(box);
+    const drop=document.createElement('button');drop.className='ocr-drop';drop.textContent='×';
+    drop.setAttribute('aria-label',`Dismiss ${box.note}`);drop.onclick=()=>dismissSuggestion(box);
+    row.append(accept,drop);$('ocrList').append(row);
+  }
+}
+$('detectText').onclick=detectText;
+$('acceptAllOcr').onclick=()=>{
+  const im=current();if(!im||!state.suggestions.length)return;
+  ensureHistory();
+  for(const box of state.suggestions)im.zones.push(toZone(box));
+  state.suggestions=[];state.selected=-1;
+  changed();updateOcrPanel();updateZones();render();
+  $('message').textContent='Accepted suggestions are ordinary zones now — check coverage, then use Copy to… to reuse them across the combo.';
+};
+$('dismissAllOcr').onclick=()=>{state.suggestions=[];updateOcrPanel();render();};
 function updateToolHint(){
   $('toolHint').textContent=!state.bitmap?'Open an image to begin.':state.preview?previewHint():state.mode==='pan'?'Drag to pan.':state.mode==='window'?'Drag ↔ for contrast, ↕ for brightness.':state.hideZones?'Boxes hidden.':selected()?'Drag to move or resize · arrows nudge 1 px, Shift 10 px · Tab for next box':'Drag to draw · Shift-drag to overlap · arrows move between files';
 }
@@ -480,7 +570,8 @@ function updateImageControls(){
   $('windowWidth').value=gray?Math.round(im.display.windowWidth??decoded.windowWidth):'';$('windowCenter').value=gray?Math.round(im.display.windowCenter??decoded.windowCenter):'';
   $('invert').disabled=!decoded;$('resetDisplay').disabled=!decoded;$('invert').setAttribute('aria-pressed',String(!!im?.display.invert));
   $('openTags').disabled=im?.kind!=='DICOM'||!im?.file;
-  for(const id of ['drawMode','panMode','zoomIn','zoomOut','fit','actual','hideZones','preview'])$(id).disabled=!state.bitmap;
+  for(const id of ['drawMode','panMode','zoomIn','zoomOut','fit','actual','hideZones','preview','detectText'])$(id).disabled=!state.bitmap;
+  if(state.ocrBusy)$('detectText').disabled=true;
   $('hideZones').disabled=!state.bitmap||state.preview; // the preview already stands in for it
   if(!gray&&state.mode==='window')setMode('draw');
   updateReuseButtons();updateToolHint();

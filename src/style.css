@@ -18,6 +18,7 @@
   --line: #232327;
   --line-strong: #35353b;
   --sunk-lib: #171719;
+  --ocr: #6fc3d4;
 
   --ink: #ebebed;
   --ink-2: #a6a6ac;
@@ -179,7 +180,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .lib-size { height: 22px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px 0 25px; font: 500 9.5px/1 var(--mono); letter-spacing: .06em; color: var(--muted); background: var(--panel); }
 .rail-foot { flex-shrink: 0; padding: 9px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); }
 .rail-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
-.rail-scroll > section:first-child { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.rail-scroll > section:first-child { flex: 1 0 auto; display: flex; flex-direction: column; }
 .rail-right section { padding: 13px 12px; border-bottom: 1px solid var(--line); }
 .rail-right section:last-child { border-bottom: 0; }
 
@@ -283,6 +284,25 @@ canvas:focus-visible { outline: 1px solid var(--ink); outline-offset: -1px; }
 .zone-empty { padding: 22px 12px; text-align: center; font-size: 11.5px; color: var(--muted); }
 
 #editor { flex-shrink: 0; margin-top: 10px; }
+
+/* Suggestions are a third state, distinct from a confirmed zone by pattern as well as
+   hue: dashed and cool where zones are solid and amber. A machine guess must never be
+   mistakable for something the operator has confirmed. */
+.caveat { margin: 0 0 9px; padding: 8px 10px; border: 1px solid var(--line-strong); border-left: 2px solid var(--ocr); border-radius: var(--r); background: var(--sunk); font-size: 10.5px; line-height: 1.55; color: var(--ink-2); }
+#ocrStatus { margin-bottom: 9px; font-variant-numeric: tabular-nums; }
+#ocrActions { margin-bottom: 9px; }
+#ocrList { display: flex; flex-direction: column; max-height: 210px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r); }
+#ocrList:empty { display: none; }
+.ocr-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); }
+.ocr-row:last-child { border-bottom: 0; }
+.ocr-row::before { content: ""; width: 2px; background: var(--ocr); flex-shrink: 0; }
+.ocr-row.covered::before { background: var(--line-strong); }
+.ocr-accept { flex: 1; min-width: 0; display: block; padding: 7px 9px; border: 0; border-radius: 0; background: none; text-align: left; }
+.ocr-accept strong { display: block; font: 500 11.5px/1.3 var(--sans); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ocr-row.covered .ocr-accept strong { color: var(--muted); text-decoration: line-through; }
+.ocr-accept small { display: block; margin-top: 2px; font: 400 10px/1.3 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.ocr-drop { min-height: 0; padding: 0 9px; border: 0; border-radius: 0; background: none; color: var(--muted); font-size: 14px; }
+.ocr-drop:hover { background: #2a1d1d; color: var(--danger); }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .field-grid label { display: block; }
 .field-grid input { margin-top: 3px; }

@@ -76,6 +76,7 @@
           <button id="windowMode" class="tool" aria-pressed="false" disabled title="Drag for contrast and brightness">Window</button>
         </div>
         <button id="preview" class="flagged" aria-pressed="false" disabled title="Redaction preview — fill every pipeline zone opaque (R)">Preview</button>
+        <button id="detectText" disabled title="Detect burned-in text and suggest boxes (T)">Detect text</button>
       </div>
       <div class="zoom" role="group" aria-label="Zoom">
         <button id="zoomOut" aria-label="Zoom out">−</button>
@@ -130,6 +131,16 @@
           <button id="deleteSelected" class="wide danger">Delete box</button>
         </div>
       </section>
+      <section id="ocrSection" hidden>
+        <div class="rail-title"><h2>Detected text</h2><span id="ocrCount" class="num">0</span></div>
+        <p class="caveat" id="ocrCaveat">OCR misses text, especially low-contrast overlays. It shows where text was found — never that an image is clean. Coverage remains yours to confirm.</p>
+        <div id="ocrStatus" class="note" role="status"></div>
+        <div class="btn-row" id="ocrActions">
+          <button id="acceptAllOcr">Accept all</button>
+          <button id="dismissAllOcr">Dismiss all</button>
+        </div>
+        <div id="ocrList"></div>
+      </section>
       <section>
         <div class="rail-title"><h2>Display</h2></div>
         <div class="field-grid">
@@ -147,6 +158,7 @@
           <dl class="keys">
             <dt>D · P</dt><dd>Draw · Pan</dd>
             <dt>R</dt><dd>Redaction preview</dd>
+            <dt>T</dt><dd>Detect burned-in text</dd>
             <dt>C</dt><dd>Copy previous frame’s boxes</dd>
             <dt>↑↓←→</dt><dd>Nudge box 1 px · Shift 10 px</dd>
             <dt>← →</dt><dd>Previous / next file when no box is selected</dd>

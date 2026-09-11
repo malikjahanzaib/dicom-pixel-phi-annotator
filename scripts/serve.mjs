@@ -5,7 +5,7 @@ import path from 'node:path';
 const port = Number(process.env.PORT || 5173);
 const root = path.resolve('dist');
 try { await stat(path.join(root, 'index.html')); } catch { console.error('Run npm run build first.'); process.exit(1); }
-const types = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.wasm':'application/wasm', '.json':'application/json', '.svg':'image/svg+xml' };
+const types = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.wasm':'application/wasm', '.json':'application/json', '.svg':'image/svg+xml', '.gz':'application/gzip' };
 http.createServer(async (req, res) => {
   // This serves application assets only. There is deliberately no upload or data API.
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end(); return; }

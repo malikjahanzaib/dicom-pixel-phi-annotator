@@ -284,7 +284,47 @@ try{
  assert.match(await page.locator('#libraryCount').textContent(),/8 files/);
  await open('combo33_640x480'); // leave a file with a live source selected
  console.log('PASS library filters with live counts, and one combo ID assigned across a filtered batch.');
- await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
+ // OCR. The context route aborts anything not on the local origin, so a detection that
+ // completes here proves the engine, its core and its language data all came from disk.
+ const textPng=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=640;c.height=480;
+  const x=c.getContext('2d');x.fillStyle='#050505';x.fillRect(0,0,640,480);
+  x.fillStyle='#f4f4f4';x.font='bold 30px "Courier New", monospace';
+  x.fillText('SMITH JANE',18,48);x.fillText('DOB 1985-03-12',18,96);
+  return c.toDataURL('image/png').split(',')[1];});
+ const textPath=path.join(fixtureDir,'combo44_640x480_s1.png');
+ await fs.writeFile(textPath,Buffer.from(textPng,'base64'));
+ await page.locator('#files').setInputFiles(textPath);
+ await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 added'));
+ await open('combo44_640x480');
+ assert.equal(await page.locator('#ocrSection').isVisible(),false,'the panel appears only once detection is asked for');
+ await page.locator('#detectText').click();
+ await page.waitForFunction(()=>Number(document.getElementById('ocrCount').textContent)>0,{},{timeout:120000});
+ const detected=Number(await page.locator('#ocrCount').textContent());
+ assert.ok(detected>=2,`expected both text lines, got ${detected}`);
+ // Every suggestion starts uncovered, and the wording reports findings, never a verdict.
+ const status=await page.locator('#ocrStatus').textContent();
+ assert.match(status,/text regions detected · \d+ not covered by a zone/);
+ assert.doesNotMatch(status,/clean|all PHI|complete|safe|verified/i);
+ assert.ok(await page.locator('#ocrCaveat').isVisible(),'the caveat is standing, not dismissible');
+ assert.match(await page.locator('#ocrCaveat').textContent(),/never that an image is clean/);
+ assert.match(await page.locator('#ocrList').textContent(),/SMITH/i);
+ // Nothing is accepted automatically: no zone exists until the operator says so.
+ assert.equal(await page.locator('#zones .zone').count(),0);
+ await page.locator('#ocrList .ocr-accept').first().click();
+ assert.equal(await page.locator('#zones .zone').count(),1);
+ assert.match(await page.locator('#note').inputValue(),/SMITH/i);
+ // The accepted box is padded outwards from the glyph bounds and sits in native pixels.
+ const box=await page.locator('#zones .zone small').first().textContent();
+ const [,bx,by,bw]=box.match(/x=(\d+), y=(\d+), w=(\d+)/).map(Number);
+ assert.ok(bx>=0&&by>=0&&bw>0&&bx+bw<=640,`accepted box must lie inside the raster: ${box}`);
+ assert.equal(Number(await page.locator('#ocrCount').textContent()),detected-1);
+ await page.screenshot({path:'.test-output/ocr.png'});
+ await page.locator('#acceptAllOcr').click();
+ assert.equal(await page.locator('#zones .zone').count(),detected);
+ assert.equal(await page.locator('#ocrList').textContent(),'');
+ assert.match(await page.locator('#ocrStatus').textContent(),/No text regions detected on this frame\. That is not a finding of "no text"\./);
+ console.log(`PASS OCR offline: ${detected} line suggestions, padded and clamped, accepted only on request, no completeness claim.`);
+ await page.setViewportSize({width:760,height:1000}); await page.setViewportSize({width:760,height:1000});await page.locator('#fit').click();await noOverflow('760px');await page.screenshot({path:'.test-output/narrow.png',fullPage:true});
  await page.setViewportSize({width:600,height:900});await noOverflow('600px');await page.setViewportSize({width:1500,height:1100});
 
  assert.deepEqual(errors,[]);assert.deepEqual(requests.filter(r=>!r.url.startsWith(origin)&&!r.url.startsWith('blob:')&&!r.url.startsWith('data:')),[]);assert.ok(requests.every(r=>r.method==='GET'));console.log('PASS explicit combo assignment, frame-preserving backup, no external requests or upload API calls.');

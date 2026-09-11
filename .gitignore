@@ -2,3 +2,4 @@ node_modules/
 dist/
 .test-output/
 .DS_Store
+public/
