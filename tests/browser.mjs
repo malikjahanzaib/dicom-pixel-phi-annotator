@@ -39,6 +39,14 @@ try{
  assert.match(await group('Unassigned'),/needs combo ID/);
  assert.match(await group('Combo 16'),/2 files · 640×480, 1024×768/);
  assert.match(await group('Combo 16'),/0\/2/);
+ // The device is read from the file, not from the ID somebody typed. Combo 16 holds two
+ // files whose software versions differ, which is exactly what a wrong combo ID looks like.
+ assert.match(await group('Unassigned'),/GE Medical Systems · LOGIQ9 · R9\.0\.0/);
+ assert.match(await group('Combo 16'),/mixed devices/);
+ assert.match(await group('Combo 16'),/2 devices/);
+ assert.equal(await page.locator('.lib-group.mixed').count(),1);
+ // The open file states all four, including the SOP class read as a name.
+ assert.match(await page.locator('#viewDevice').textContent(),/GE Medical Systems · LOGIQ9 · R9\.0\.0 · Ultrasound Image/);
  // A combo carrying two rasters labels them, because a zone only means anything at one size.
  assert.deepEqual(await page.locator('.lib-size span').allTextContents(),['640×480','1 file','1024×768','1 file']);
  // Collapsing a finished combo drops its rows and keeps its header — the core batch loop.
@@ -202,7 +210,9 @@ try{
  await page.locator('#files').setInputFiles(path.join(fixtureDir,'combo16_640x480_s1.dcm'));await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 reconnected'));await waitImage();await page.locator('#framePrevious').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/patient strip/);
  await page.locator('#frameNext').click();await waitImage();assert.match(await page.locator('#zones').textContent(),/DOB/);console.log('PASS clear saved data, restore backup, hash-based source reconnection, and frame annotations.');
  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=640;c.height=480;const ctx=c.getContext('2d');ctx.fillStyle='#aaa';ctx.fillRect(0,0,420,40);return c.toDataURL('image/png').split(',')[1];});
- const pngPath=path.join(fixtureDir,'combo33_640x480_s1.png');await fs.writeFile(pngPath,Buffer.from(png,'base64'));await page.locator('#files').setInputFiles(pngPath);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 added'));await open('combo33_640x480');await draw(0,0,420,40);assert.match(await page.locator('#boxReadout').textContent(),/w=420, h=40/);assert.equal(await page.locator('#openTags').isDisabled(),true);console.log('PASS PNG compatibility in the DICOM workspace.');
+ const pngPath=path.join(fixtureDir,'combo33_640x480_s1.png');await fs.writeFile(pngPath,Buffer.from(png,'base64'));await page.locator('#files').setInputFiles(pngPath);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('1 added'));await open('combo33_640x480');
+ assert.equal(await page.locator('#viewDevice').isVisible(),false,'a PNG carries no device tags');
+ await draw(0,0,420,40);assert.match(await page.locator('#boxReadout').textContent(),/w=420, h=40/);assert.equal(await page.locator('#openTags').isDisabled(),true);console.log('PASS PNG compatibility in the DICOM workspace.');
  // Batch reuse: same-size files only, optionally narrowed to one combo ID.
  await page.locator('#note').fill('copied strip');await page.locator('#note').press('Tab');
  await page.locator('#openReuse').click();await page.waitForFunction(()=>document.getElementById('reuseDialog').open);

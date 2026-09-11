@@ -4,6 +4,7 @@ import { openTagViewer } from './tag-viewer.js';
 import { sourceZones, reuseTargets, planReuse, applyPlan, describePlan } from './reuse.js';
 import { extractLines, suggestionBoxes, coverage, toZone, aboveConfidence, DEFAULT_CONFIDENCE } from './ocr.js';
 import { contactFiles, thumbFlags, scaleZones, gridWindow } from './contact.js';
+import { deviceLabel, deviceDetail, hasDevice } from './device.js';
 import { FILTERS, UNASSIGNED, boxCount, invalidateCount, filterLibrary, filterCounts, groupLibrary, libraryRows, navigation, planComboAssignment, describeComboAssignment } from './library.js';
 import { inspectFile } from './import.js';
 import { openDatabase, loadSession, loadFile, saveFile, saveSession, clearSession, removeFile, loadTemplates, putTemplate, deleteTemplate } from './storage.js';
@@ -357,7 +358,7 @@ function travelHistory(direction){if(state.drag)return;flushNudge();const im=cur
 const shownFiles=()=>libraryEntries();
 // Row geometry is fixed so the window can be found by arithmetic instead of measurement.
 // These must match the heights in style.css exactly.
-const ROW_H={group:52,size:22,file:44},OVERSCAN=6,VIRTUALIZE_ABOVE=60;
+const ROW_H={group:68,size:22,file:44},OVERSCAN=6,VIRTUALIZE_ABOVE=60;
 function libraryEntries(){
   const flat=[];
   for(const row of state.rows) if(row.type==='file') flat.push(row.entry);
@@ -384,12 +385,14 @@ function visibleRange(){
 }
 function groupHeader(group){
   const head=document.createElement('button');
-  head.className='lib-group'+(state.collapsed.has(group.key)?' collapsed':'');
+  head.className='lib-group'+(state.collapsed.has(group.key)?' collapsed':'')+(group.mixedDevices?' mixed':'');
   head.setAttribute('aria-expanded',String(!state.collapsed.has(group.key)));
   const title=document.createElement('span');title.className='lib-group-title';
   const name=document.createElement('strong');name.textContent=group.key===UNASSIGNED?'Unassigned':`Combo ${group.combo}`;
   title.append(name);
   if(group.needsCombo){const badge=document.createElement('em');badge.className='badge';badge.textContent='needs combo ID';title.append(badge);}
+  if(group.mixedDevices){const badge=document.createElement('em');badge.className='badge alert';badge.textContent=`${group.devices.length} devices`;
+    badge.title='Files in this combo report different manufacturer, model, SOP class or software version. Either the combo ID is wrong or the layout assumption behind it is.';title.append(badge);}
   // Progress sits on the title row: it is the number the operator scans for, and the
   // size list below is long enough to push it out of sight if they share a line.
   const progress=document.createElement('span');progress.className='lib-progress';
@@ -398,7 +401,13 @@ function groupHeader(group){
   title.append(progress);
   const meta=document.createElement('span');meta.className='lib-group-meta';
   meta.textContent=`${group.total} file${group.total===1?'':'s'} · ${group.sizes.map(s=>s.size).join(', ')}`;
-  head.append(title,meta);
+  // The row height is fixed for the windowing, so this line is always present — an
+  // absent device is stated rather than silently collapsing the row.
+  const device=document.createElement('span');device.className='lib-group-device';
+  device.textContent=group.mixedDevices?'mixed devices — see files'
+    :group.device?deviceLabel(group.device):'no device tags';
+  if(group.device)device.title=deviceDetail(group.device);
+  head.append(title,meta,device);
   head.onclick=()=>{
     if(state.collapsed.has(group.key))state.collapsed.delete(group.key);else state.collapsed.add(group.key);
     persist();updateLibrary();
@@ -610,6 +619,8 @@ function updateToolHint(){
 function updateImageControls(){
   const im=current(),decoded=state.decoded,gray=!!decoded&&!decoded.color;
   $('viewTitle').textContent=im?.name||'No file';$('viewSubtitle').textContent=im?`${im.kind} · ${im.width}×${im.height} · ${im.combo?'combo '+im.combo:'no combo'}`:'';
+  const device=im&&hasDevice(im.metadata)?deviceDetail(im.metadata):'';
+  $('viewDevice').textContent=device;$('viewDevice').hidden=!device;
   $('comboId').disabled=!im;$('comboId').value=im?.combo||'';$('removeImage').disabled=!im;
   $('frameLabel').textContent=im?`${im.frameIndex+1} / ${im.frameCount}`:'—';
   $('frameSlider').max=im?im.frameCount-1:0;$('frameSlider').value=im?.frameIndex||0;$('frameSlider').disabled=!im||im.frameCount===1;

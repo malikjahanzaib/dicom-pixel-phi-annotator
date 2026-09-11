@@ -9,10 +9,10 @@ export function element(group,tag,vr,value){
  if(wide)h.writeUInt32LE(data.length,8);else h.writeUInt16LE(data.length,6);return Buffer.concat([h,data]);
 }
 function encapsulate(data){if(data.length%2)data=Buffer.concat([data,Buffer.from([0])]);const header=Buffer.from('e07f10004f420000ffffffff','hex'),bot=Buffer.from('feff00e000000000','hex'),item=Buffer.alloc(8);item.writeUInt16LE(0xfffe);item.writeUInt16LE(0xe000,2);item.writeUInt32LE(data.length,4);return Buffer.concat([header,bot,item,data,Buffer.from('feffdde000000000','hex')]);}
-export function dicom({width=640,height=480,frames=1,syntax='1.2.840.10008.1.2.1',bits=8,photo='MONOCHROME2',signed=false,compressed=null,spacing='0.8\\0.3',slope='1',intercept='0',extraTags=[],trailingTags=[]}={}){
+export function dicom({device={},width=640,height=480,frames=1,syntax='1.2.840.10008.1.2.1',bits=8,photo='MONOCHROME2',signed=false,compressed=null,spacing='0.8\\0.3',slope='1',intercept='0',extraTags=[],trailingTags=[]}={}){
  const color=photo==='RGB'||photo.startsWith('YBR'),components=color?3:1;
  const parts=[Buffer.alloc(128),Buffer.from('DICM'),element(2,1,'OB',Buffer.from([0,1])),element(2,2,'UI','1.2.840.10008.5.1.4.1.1.7'),element(2,3,'UI','2.25.123456789'),element(2,0x10,'UI',syntax),element(2,0x12,'UI','2.25.987654321'),
- element(8,0x16,'UI','1.2.840.10008.5.1.4.1.1.7'),element(8,0x18,'UI','2.25.123456789'),element(8,0x60,'CS','US'),element(0x20,0xd,'UI','2.25.1'),element(0x20,0xe,'UI','2.25.2'),
+ element(8,0x16,'UI',device.sopClass??'1.2.840.10008.5.1.4.1.1.6.1'),element(8,0x70,'LO',device.manufacturer??'GE Medical Systems'),element(8,0x1090,'LO',device.model??'LOGIQ9'),element(0x18,0x1020,'LO',device.software??'LOGIQ9:R9.0.0'),element(8,0x18,'UI','2.25.123456789'),element(8,0x60,'CS','US'),element(0x20,0xd,'UI','2.25.1'),element(0x20,0xe,'UI','2.25.2'),
  element(0x28,2,'US',components),element(0x28,4,'CS',photo),...(color?[element(0x28,6,'US',0)]:[]),element(0x28,8,'IS',String(frames)),element(0x28,0x10,'US',height),element(0x28,0x11,'US',width),element(0x28,0x30,'DS',spacing),element(0x28,0x100,'US',bits),element(0x28,0x101,'US',bits),element(0x28,0x102,'US',bits-1),element(0x28,0x103,'US',signed?1:0),element(0x28,0x1050,'DS',bits===16?'0':'128'),element(0x28,0x1051,'DS',bits===16?'4096':'256'),element(0x28,0x1052,'DS',intercept),element(0x28,0x1053,'DS',slope)];
  parts.push(...extraTags);
  const pixels=Buffer.alloc(width*height*frames*components*bits/8);
@@ -26,7 +26,7 @@ export function dicom({width=640,height=480,frames=1,syntax='1.2.840.10008.1.2.1
  return Buffer.concat([...parts,...trailingTags]);
 }
 export function makeFixtures(){fs.mkdirSync(fixtureDir,{recursive:true});for(const [name,options]of Object.entries({
- 'combo16_640x480_s1.dcm':{frames:3},'combo16_1024x768_s1.dcm':{width:1024,height:768},'rle.dcm':{syntax:'1.2.840.10008.1.2.5'},'signed16.dcm':{bits:16,signed:true,slope:'2',intercept:'-100'},'mono1.dcm':{photo:'MONOCHROME1'},'rgb.dcm':{photo:'RGB'},'broken.dcm':null}))fs.writeFileSync(path.join(fixtureDir,name),options?dicom(options):'broken');}
+ 'combo16_640x480_s1.dcm':{frames:3},'combo16_1024x768_s1.dcm':{width:1024,height:768,device:{software:'LOGIQ9:R8.0.0'}},'rle.dcm':{syntax:'1.2.840.10008.1.2.5'},'signed16.dcm':{bits:16,signed:true,slope:'2',intercept:'-100'},'mono1.dcm':{photo:'MONOCHROME1'},'rgb.dcm':{photo:'RGB'},'broken.dcm':null}))fs.writeFileSync(path.join(fixtureDir,name),options?dicom(options):'broken');}
 
 export const item=bytes=>{const header=Buffer.from('feff00e000000000','hex');header.writeUInt32LE(bytes.length,4);return Buffer.concat([header,bytes]);};
 export function tagFixture(){

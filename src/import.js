@@ -1,5 +1,6 @@
 import dicomParser from 'dicom-parser';
 import { parseFilename, hydrate } from './coordinates.js';
+import { DEVICE_TAGS } from './device.js';
 export async function inspectFile(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -16,7 +17,11 @@ export async function inspectFile(file) {
     width = data.uint16('x00280011'); height = data.uint16('x00280010');
     frameCount = Number(data.string('x00280008') || 1);
     if (!data.elements.x7fe00010) throw new Error('DICOM contains no supported image Pixel Data.');
-    metadata = { modality: data.string('x00080060') || '—', photometric: data.string('x00280004') || '—', bits: data.uint16('x00280100'), transferSyntax: data.string('x00020010') || '—' };
+    // The four attributes that define the device combination, read once here so they
+    // travel with the record into backups and cost nothing per render. All sit before
+    // Pixel Data, so the untilTag parse above has already reached them.
+    const device = Object.fromEntries(Object.entries(DEVICE_TAGS).map(([field, tag]) => [field, data.string(tag) || '']));
+    metadata = { modality: data.string('x00080060') || '—', photometric: data.string('x00280004') || '—', bits: data.uint16('x00280100'), transferSyntax: data.string('x00020010') || '—', ...device };
   }
   if (![width,height,frameCount].every(n=>Number.isSafeInteger(n)&&n>0)) throw new Error('Invalid image dimensions or frame count.');
   const parsed = parseFilename(file.name);

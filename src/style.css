@@ -169,7 +169,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
    by arithmetic, never by measuring the DOM. Change one and you must change the other. */
 .lib-canvas { position: relative; width: 100%; }
 .lib-pane { position: absolute; top: 0; left: 0; right: 0; }
-.lib-group { height: 52px; width: 100%; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 3px; padding: 0 12px 0 10px; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); background: var(--sunk-lib); text-align: left; }
+.lib-group { height: 68px; width: 100%; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 3px; padding: 0 12px 0 10px; border: 0; border-radius: 0; border-bottom: 1px solid var(--line); background: var(--sunk-lib); text-align: left; }
 .lib-group:hover { background: #1c1c20; }
 .lib-group-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .lib-group-title::before { content: "\25be"; font-size: 9px; color: var(--muted); width: 8px; flex-shrink: 0; }
@@ -177,6 +177,9 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .lib-group strong { font: 600 11.5px/1.2 var(--sans); letter-spacing: .01em; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-progress { margin-left: auto; padding-left: 8px; font: 400 10px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-2); flex-shrink: 0; }
 .lib-group .badge { font: 500 8.5px/1 var(--mono); font-style: normal; letter-spacing: .07em; text-transform: uppercase; color: var(--flag); border: 1px solid var(--flag); border-radius: 2px; padding: 2px 4px; flex-shrink: 0; }
+.lib-group-device { padding-left: 15px; font: 400 9.5px/1.2 var(--mono); color: #5a5a63; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-group.mixed .lib-group-device, .lib-group .badge.alert { color: var(--flag); }
+.lib-group .badge.alert { border-color: var(--flag); }
 .lib-group-meta { padding-left: 15px; font: 400 9.5px/1.2 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-size { height: 22px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px 0 25px; font: 500 9.5px/1 var(--mono); letter-spacing: .06em; color: var(--muted); background: var(--panel); }
 .rail-foot { flex-shrink: 0; padding: 9px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); }
@@ -230,6 +233,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .stage-id { min-width: 0; }
 .stage-id h2 { font: 500 13px/1.3 var(--sans); letter-spacing: -0.01em; text-transform: none; color: var(--ink); overflow-wrap: anywhere; }
 .stage-id .num { display: block; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+.stage-id .device { margin-top: 1px; font-size: 10px; color: #5a5a63; overflow-wrap: anywhere; }
 
 #warning { flex-shrink: 0; padding: 7px 14px; font-size: 11.5px; color: #e6c98a; background: #171308; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); border-left: 2px solid var(--flag); }
 

@@ -1,5 +1,7 @@
 // Library triage: which files are shown, and assigning one combo ID to a whole batch.
 // Kept pure so the counts an operator uses to judge "is this batch finished" are testable.
+import { deviceSignature, deviceSignatures } from './device.js';
+
 export const FILTERS = ['all', 'unannotated', 'annotated', 'needs-combo', 'source-needed'];
 export const UNASSIGNED = 'unassigned';
 // Counting walks every frame of an image, so at a thousand multiframe files it is the
@@ -85,6 +87,11 @@ export function groupLibrary(entries) {
   for (const group of groups.values()) {
     group.total = group.files.length;
     group.sizes.sort((a, b) => a.width - b.width || a.height - b.height);
+    // What the files themselves say they came from. More than one signature means the
+    // combo ID is grouping different machines.
+    group.devices = deviceSignatures(group.files.map(entry => entry.image));
+    group.device = group.files.map(entry => entry.image).find(image => deviceSignature(image.metadata))?.metadata || null;
+    group.mixedDevices = group.devices.length > 1;
   }
   return [...groups.values()].sort((a, b) =>
     (a.key === UNASSIGNED ? -1 : 0) - (b.key === UNASSIGNED ? -1 : 0) ||
